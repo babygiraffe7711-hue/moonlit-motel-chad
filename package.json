@@ -1,9 +1,9 @@
 {
   "name": "moonlit-motel-chad",
   "version": "1.0.0",
-  "description": "Chad \u2014 Moonlit Motel bot",
   "type": "module",
   "main": "index.js",
+  "license": "MIT",
   "scripts": {
     "start": "node index.js"
   },
