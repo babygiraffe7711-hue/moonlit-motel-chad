@@ -9,6 +9,14 @@
 // ---------------------------------------------------------------
 
 import 'dotenv/config';
+
+// (Optional) Hard gate so only the chosen service runs the bot.
+// If you set RUN_CHAD=1 on your intended worker, any other environment won't start Chad.
+if (process.env.RUN_CHAD && (process.env.RUN_CHAD || '').trim() !== '1') {
+  console.log('RUN_CHAD present but not "1" — exiting to avoid unintended instance.');
+  process.exit(0);
+}
+
 import { Client, GatewayIntentBits, Partials, PermissionsBitField } from 'discord.js';
 import fs from 'fs';
 import path from 'path';
@@ -17,17 +25,17 @@ import OpenAI from 'openai';
 
 // ---------- CONFIG ----------
 const TZ  = process.env.TIMEZONE || 'America/Winnipeg';
-const OWM = process.env.OPENWEATHER_API_KEY || null;
+const OWM = (process.env.OPENWEATHER_API_KEY || '').trim() || null;
 
 // Where state files live (Render disk if present)
 const STATE_DIR  = fs.existsSync('/data') ? '/data' : path.resolve('./');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 const DYN_INTENTS_PATH = path.join(STATE_DIR, 'brain_dynamic.json');
 
-// ---------- SINGLETON LOCK (avoid double posts on Render) ----------
+// ---------- SINGLETON LOCK (per-container; prevents duplicate replies inside one container) ----------
 const LOCK_PATH = path.join(STATE_DIR, 'chad.lock');
 const MAX_LOCK_AGE_MS = (process.env.CHAD_LOCK_MAX_AGE_MINUTES ? Number(process.env.CHAD_LOCK_MAX_AGE_MINUTES) : 10) * 60 * 1000;
-if (process.env.CHAD_LOCK_BUST === '1') { try { fs.rmSync(LOCK_PATH, { force: true }); } catch {} }
+if ((process.env.CHAD_LOCK_BUST || '').trim() === '1') { try { fs.rmSync(LOCK_PATH, { force: true }); } catch {} }
 try {
   const st = fs.statSync(LOCK_PATH);
   if (Date.now() - st.mtimeMs > MAX_LOCK_AGE_MS) { fs.rmSync(LOCK_PATH, { force: true }); }
@@ -37,7 +45,7 @@ try {
   _lockFd = fs.openSync(LOCK_PATH, 'wx');
   fs.writeFileSync(_lockFd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }, null, 2));
 } catch {
-  console.error('🚫 Another Chad instance is already running. Exiting to avoid double posts.');
+  console.error('🚫 Another Chad instance is already running in this container. Exiting to avoid double posts.');
   process.exit(0);
 }
 function releaseLockAndExit(code=0){ try{ if(_lockFd!==null) fs.closeSync(_lockFd);}catch{} try{fs.unlinkSync(LOCK_PATH);}catch{} process.exit(code); }
@@ -67,13 +75,12 @@ const client = new Client({
 
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+  console.log('Service instance:', process.env.RENDER_INSTANCE_ID || 'local');
   console.log(`OpenWeather: ${!!OWM} | Timezone: ${TZ}`);
   console.log('DISCORD_TOKEN present:', !!(process.env.DISCORD_TOKEN||'').trim());
   console.log('OPENWEATHER_API_KEY present:', !!(process.env.OPENWEATHER_API_KEY||'').trim());
-  console.log(`OpenAI: ${!!OPENAI_KEY} | Model: ${AI_MODEL}`);
-  if (!OPENAI_KEY) {
-    console.warn('⚠️ OPENAI_API_KEY missing or blank. Chad will NOT use OpenAI.');
-  }
+  console.log(`OpenAI: ${!!OPENAI_KEY} | Model: ${AI_MODEL} | Org: ${OPENAI_ORG || '(none)'} | Project: ${OPENAI_PROJECT || '(none)'}`);
+  if (!OPENAI_KEY) console.warn('⚠️ OPENAI_API_KEY missing or blank. Chad will NOT use OpenAI.');
 
   // Ambient: drop a random line every ~3 hours, per guild 35% chance
   setInterval(async () => {
@@ -104,7 +111,7 @@ function normalizeWake(content, client) {
   if (c.startsWith(`<@${id}>`) || c.startsWith(`<@!${id}>`)) {
     const rest = c.split('>', 1)[1]?.trim() || '';
     return `chad, ${rest}`;
-  }
+    }
   return c;
 }
 
@@ -340,14 +347,24 @@ function buildSoupyLore() {
 
 // ---------- AI FALLBACK ----------
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || '').trim();
-const openai = OPENAI_KEY ? new OpenAI({ apiKey: OPENAI_KEY }) : null;
+const OPENAI_ORG = (process.env.OPENAI_ORG_ID || '').trim() || undefined;
+const OPENAI_PROJECT = (process.env.OPENAI_PROJECT || '').trim() || undefined;
+
+const openai = OPENAI_KEY ? new OpenAI({
+  apiKey: OPENAI_KEY,
+  organization: OPENAI_ORG,
+  project: OPENAI_PROJECT
+}) : null;
+
 const AI_MODEL = (process.env.CHAD_AI_MODEL || 'gpt-4o-mini').trim();
+
 const SYSTEM_CHAD = `
 You are "Chad", the Moonlit Motel desk clerk: witty, kind, a little feral.
 Be concise and helpful. Stay in-universe but use tools for facts (time/weather/justice/basement/roles).
 Never invent server rules; call tools I give you.
 If a question is clearly "mystery progression", say: "try the mirror, the light, or the ledger."
 `;
+
 const toolDefs = [
   { type:"function", name:"tool_time", description:"Return local time for a place", parameters:{ type:"object", properties:{ place:{type:"string"} }, required:["place"] } },
   { type:"function", name:"tool_weather", description:"Return current weather for a place", parameters:{ type:"object", properties:{ place:{type:"string"} }, required:["place"] } },
@@ -355,6 +372,7 @@ const toolDefs = [
   { type:"function", name:"tool_justice", description:"Explain Motel justice/court system", parameters:{ type:"object", properties:{}, required:[] } },
   { type:"function", name:"tool_roles", description:"Explain server roles", parameters:{ type:"object", properties:{}, required:[] } }
 ];
+
 async function tool_time(args){ return formatTime(tzAlias(args.place)); }
 async function tool_weather(args){ const res = await fetchWeather(args.place || ""); return res.err ? `⚠️ ${res.err}` : res.text; }
 async function tool_basement(){
@@ -367,12 +385,33 @@ SFW jail: **${sfw}** • NSFW jail: **${nsfw}**`;
 }
 async function tool_justice(){ return buildJusticeExplainer(); }
 async function tool_roles(){ return buildRolesOverview(); }
+
 async function aiAnswer(userText){
-  // Allow AI even if lore words appear; mystery is handled earlier.
   if (!openai) return null;
+
   const messages = [{ role:"system", content:SYSTEM_CHAD }, { role:"user", content:userText }];
-  const resp = await openai.chat.completions.create({ model:AI_MODEL, messages, tools:toolDefs, tool_choice:"auto", temperature:0.7 });
-  const msg = resp.choices[0].message;
+
+  // one simple retry wrapper
+  async function callOnce() {
+    const resp = await openai.chat.completions.create({
+      model: AI_MODEL,
+      messages,
+      tools: toolDefs,
+      tool_choice: "auto",
+      temperature: 0.7
+    });
+    return resp.choices[0].message;
+  }
+
+  let msg;
+  try {
+    msg = await callOnce();
+  } catch (e) {
+    // brief backoff + retry
+    await new Promise(r=>setTimeout(r, 600));
+    msg = await callOnce();
+  }
+
   if (msg.tool_calls?.length) {
     const call = msg.tool_calls[0];
     const name = call.function.name;
@@ -384,7 +423,9 @@ async function aiAnswer(userText){
       if (name === "tool_basement") toolResult = await tool_basement();
       if (name === "tool_justice")  toolResult = await tool_justice();
       if (name === "tool_roles")    toolResult = await tool_roles();
-    } catch { toolResult = "⚠️ tool failed."; }
+    } catch {
+      toolResult = "⚠️ tool failed.";
+    }
     const follow = await openai.chat.completions.create({
       model: AI_MODEL,
       messages: [
@@ -424,26 +465,67 @@ async function routeIntent(message, contentNorm, gState) {
   return false;
 }
 
-// ---------- MYSTERY ----------
+// ---------- MYSTERY (returns boolean: did we reply?) ----------
 async function handleMystery(message, contentNorm) {
   const gState = getGuildState(message.guild.id);
   const stageObj = (brain.stages || []).find(s => s.number === gState.stage);
-  if (!stageObj) return;
+  if (!stageObj) return false;
+
   const triggered = (stageObj.triggers || []).some(rx => new RegExp(rx, 'i').test(contentNorm));
-  if (!triggered) { await maybeHint(message, gState, stageObj, contentNorm); return; }
+  if (!triggered) { await maybeHint(message, gState, stageObj, contentNorm); return false; }
+
   if (stageObj.timeWindow) {
     const [sh, sm, eh, em] = stageObj.timeWindow;
-    if (!nowInWindow(sh, sm, eh, em)) { await message.reply(stageObj.timeLockedReply || "too early. so ambitious. so wrong.").catch(()=>{}); return; }
+    if (!nowInWindow(sh, sm, eh, em)) {
+      await message.reply(stageObj.timeLockedReply || "too early. so ambitious. so wrong.").catch(()=>{});
+      return true;
+    }
   }
+
   switch (gState.stage) {
-    case 3: { await message.channel.send(stageObj.response).catch(()=>{}); if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{}); gState.gates.s3 = gState.gates.s3 || { confessors: {} }; break; }
-    case 6: { await message.channel.send(stageObj.response).catch(()=>{}); if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{}); gState.gates.s6 = { sequence: [], done: false }; break; }
-    case 7: { await message.channel.send(stageObj.response).catch(()=>{}); if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{}); gState.gates.s7 = { apologyBy: null, forgivenessBy: null }; break; }
-    case 9: { const pollMsg = await message.channel.send(stageObj.response).catch(()=>null); if (pollMsg){ await pollMsg.react('✅').catch(()=>{}); await pollMsg.react('❌').catch(()=>{});} gState.gates.s9 = { pollId: pollMsg?.id || null, closed: false }; saveJSON(STATE_PATH, state); return; }
-    case 10:{ await message.channel.send(stageObj.response).catch(()=>{}); const role = await ensureKeyholderRole(message.guild); const chan = await ensureArchiveChannel(message.guild, role); const contributors = Object.keys(gState.participants || {}); for (const uid of contributors){ const member = await message.guild.members.fetch(uid).catch(()=>null); if (member && !member.roles.cache.has(role.id)) await member.roles.add(role).catch(()=>{}); } await chan.send(brain.finaleRoomWelcome || "Welcome, Keyholders.").catch(()=>{}); break; }
-    default:{ await message.channel.send(stageObj.response).catch(()=>{}); }
+    case 3: {
+      await message.channel.send(stageObj.response).catch(()=>{});
+      if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{});
+      gState.gates.s3 = gState.gates.s3 || { confessors: {} };
+      break;
+    }
+    case 6: {
+      await message.channel.send(stageObj.response).catch(()=>{});
+      if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{});
+      gState.gates.s6 = { sequence: [], done: false };
+      break;
+    }
+    case 7: {
+      await message.channel.send(stageObj.response).catch(()=>{});
+      if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{});
+      gState.gates.s7 = { apologyBy: null, forgivenessBy: null };
+      break;
+    }
+    case 9: {
+      const pollMsg = await message.channel.send(stageObj.response).catch(()=>null);
+      if (pollMsg){ await pollMsg.react('✅').catch(()=>{}); await pollMsg.react('❌').catch(()=>{}); }
+      gState.gates.s9 = { pollId: pollMsg?.id || null, closed: false };
+      saveJSON(STATE_PATH, state);
+      return true;
+    }
+    case 10: {
+      await message.channel.send(stageObj.response).catch(()=>{});
+      const role = await ensureKeyholderRole(message.guild);
+      const chan = await ensureArchiveChannel(message.guild, role);
+      const contributors = Object.keys(gState.participants || {});
+      for (const uid of contributors){
+        const member = await message.guild.members.fetch(uid).catch(()=>null);
+        if (member && !member.roles.cache.has(role.id)) await member.roles.add(role).catch(()=>{});
+      }
+      await chan.send(brain.finaleRoomWelcome || "Welcome, Keyholders.").catch(()=>{});
+      break;
+    }
+    default: {
+      await message.channel.send(stageObj.response).catch(()=>{});
+    }
   }
   if (!stageObj.requiresGate) { gState.stage++; saveJSON(STATE_PATH, state); } else saveJSON(STATE_PATH, state);
+  return true;
 }
 
 // ---------- MESSAGE HANDLER ----------
@@ -456,10 +538,42 @@ const CHAD_FALLBACKS = [
 
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
+
+  // --- event visibility diag
+  console.log('[evt] messageCreate', {
+    guild: !!message.guild,
+    authorBot: message.author?.bot,
+    contentLen: (message.content || '').length,
+    channel: message.channel?.id,
+    thread: !!message.channel?.isThread?.(),
+  });
+
   const gState = getGuildState(message.guild.id);
   gState.participants[message.author.id] = true;
 
   const content = normalizeWake(message.content || '', client);
+
+  // Quick health check: "chad, diag openai"
+  if (/^chad[, ]\s*diag\s+openai$/i.test(content)) {
+    try {
+      if (!openai) {
+        await message.reply('❌ OPENAI_API_KEY missing (server env).').catch(()=>{});
+      } else {
+        const result = await openai.chat.completions.create({
+          model: AI_MODEL,
+          messages: [{ role: 'user', content: 'Say OK' }],
+          max_tokens: 5
+        });
+        await message.reply('✅ OpenAI OK: ' + (result.choices?.[0]?.message?.content || 'no content')).catch(()=>{});
+      }
+    } catch (e) {
+      console.error('OpenAI diag error:', {
+        status: e?.status, code: e?.code, type: e?.type, msg: e?.message, data: e?.response?.data
+      });
+      await message.reply(`❌ OpenAI diag failed (${e?.status || 'no-status'}). Check logs.`).catch(()=>{});
+    }
+    return;
+  }
 
   // Roast homage (daily cooldown)
   await maybeRoast(message, gState);
@@ -601,7 +715,8 @@ client.on('messageCreate', async (message) => {
   }
 
   // Run mystery before AI/catch-alls so triggers fire properly
-  await handleMystery(message, content);
+  const mysteryHit = await handleMystery(message, content);
+  if (mysteryHit) return;
 
   // AI FALLBACK for anything addressed to Chad that wasn't caught
   if (/^\s*(?:chad|<@!?\d+>)/i.test(content)) {
@@ -621,8 +736,17 @@ client.on('messageCreate', async (message) => {
         return;
       }
     } catch (e) {
-      console.error('OpenAI error:', e);
-      await message.reply('⚠️ OpenAI call failed. See logs for details.').catch(()=>{});
+      // ultra-verbose OpenAI error logging
+      const safe = {
+        name: e?.name,
+        status: e?.status,
+        code: e?.code,
+        type: e?.type,
+        message: e?.message,
+        data: e?.response?.data,
+      };
+      console.error('OpenAI error detail:', safe);
+      await message.reply(`⚠️ OpenAI call failed (${safe.status || 'no-status'}).`).catch(()=>{});
       return;
     }
   }
