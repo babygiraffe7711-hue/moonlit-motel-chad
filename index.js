@@ -68,6 +68,13 @@ const client = new Client({
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   console.log(`OpenWeather: ${!!OWM} | Timezone: ${TZ}`);
+  console.log('DISCORD_TOKEN present:', !!(process.env.DISCORD_TOKEN||'').trim());
+  console.log('OPENWEATHER_API_KEY present:', !!(process.env.OPENWEATHER_API_KEY||'').trim());
+  console.log(`OpenAI: ${!!OPENAI_KEY} | Model: ${AI_MODEL}`);
+  if (!OPENAI_KEY) {
+    console.warn('⚠️ OPENAI_API_KEY missing or blank. Chad will NOT use OpenAI.');
+  }
+
   // Ambient: drop a random line every ~3 hours, per guild 35% chance
   setInterval(async () => {
     if (!brain.ambient?.length) return;
@@ -332,8 +339,9 @@ function buildSoupyLore() {
 }
 
 // ---------- AI FALLBACK ----------
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const AI_MODEL = process.env.CHAD_AI_MODEL || 'gpt-4o-mini';
+const OPENAI_KEY = (process.env.OPENAI_API_KEY || '').trim();
+const openai = OPENAI_KEY ? new OpenAI({ apiKey: OPENAI_KEY }) : null;
+const AI_MODEL = (process.env.CHAD_AI_MODEL || 'gpt-4o-mini').trim();
 const SYSTEM_CHAD = `
 You are "Chad", the Moonlit Motel desk clerk: witty, kind, a little feral.
 Be concise and helpful. Stay in-universe but use tools for facts (time/weather/justice/basement/roles).
@@ -360,8 +368,8 @@ SFW jail: **${sfw}** • NSFW jail: **${nsfw}**`;
 async function tool_justice(){ return buildJusticeExplainer(); }
 async function tool_roles(){ return buildRolesOverview(); }
 async function aiAnswer(userText){
-  if (/(mirror|ledger|light|keyholder|stage|door)/i.test(userText)) return null;
-  if (!openai.apiKey) return null;
+  // Allow AI even if lore words appear; mystery is handled earlier.
+  if (!openai) return null;
   const messages = [{ role:"system", content:SYSTEM_CHAD }, { role:"user", content:userText }];
   const resp = await openai.chat.completions.create({ model:AI_MODEL, messages, tools:toolDefs, tool_choice:"auto", temperature:0.7 });
   const msg = resp.choices[0].message;
@@ -597,10 +605,26 @@ client.on('messageCreate', async (message) => {
 
   // AI FALLBACK for anything addressed to Chad that wasn't caught
   if (/^\s*(?:chad|<@!?\d+>)/i.test(content)) {
+    const stripped = content.replace(/^\s*(?:chad|<@!?\d+>)[, ]*/i, '');
     try {
-      const ai = await aiAnswer(content.replace(/^\s*(?:chad|<@!?\d+>)[, ]*/i,''));
-      if (ai) { await message.reply(ai).catch(()=>{}); return; }
-    } catch {}
+      if (!openai) {
+        await message.reply('⚠️ OPENAI_API_KEY is missing on the server, so I can’t use my brain.').catch(()=>{});
+        return;
+      }
+      const ai = await aiAnswer(stripped);
+      if (ai && ai.trim()) {
+        await message.reply(ai).catch(()=>{});
+        return;
+      } else {
+        console.error('AI returned empty/null. Input was:', stripped);
+        await message.reply('⚠️ I glitched trying to talk to OpenAI. Check server logs.').catch(()=>{});
+        return;
+      }
+    } catch (e) {
+      console.error('OpenAI error:', e);
+      await message.reply('⚠️ OpenAI call failed. See logs for details.').catch(()=>{});
+      return;
+    }
   }
 
   // Catch-alls so Chad answers when addressed
@@ -637,4 +661,4 @@ client.on('messageReactionAdd', async (reaction, user) => {
 });
 
 // ---------- LOGIN ----------
-client.login(process.env.DISCORD_TOKEN);
+client.login((process.env.DISCORD_TOKEN || '').trim());
