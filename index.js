@@ -1,7 +1,7 @@
-// Chad — Moonlit Motel bot (FULL BUILD)
-// Includes: mention normalization, singleton lock, ambient, roasts, weather/time,
-// basement Q&A (cheeky Sunday), justice explainer, mystery stages engine + gates,
-// unique hint cycling, polls, role rewards, archive room, easter eggs, persistence.
+// Chad — Moonlit Motel bot (FULL BUILD + auto-clearing lock)
+// Features: mention normalization, singleton lock, ambient lines, roasts, time, weather (US/CA normalizer + geocode fallback),
+// basement Q&A (cheeky Sunday), justice explainer, mystery engine + gates (3/6/7/9/10), unique hint cycling,
+// poll handling, Keyholder role + archive room, easter eggs, persistence.
 
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField } from 'discord.js';
@@ -11,48 +11,64 @@ import { DateTime } from 'luxon';
 
 // ---------- CONFIG ----------
 const TZ  = process.env.TIMEZONE || 'America/Winnipeg';
-const OWM = process.env.OPENWEATHER_API_KEY || null;
+const OWM = process.env.OPENWEATHER_API_KEY || null; // OpenWeather API key (optional, but needed for weather)
 
-// Prefer /data if mounted (Render disk). Else local file
 const STATE_DIR  = fs.existsSync('/data') ? '/data' : path.resolve('./');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 
-// ---------- SINGLETON LOCK (avoid double replies from multiple workers) ----------
+// ---------- SINGLETON LOCK (auto-clears stale locks + cleans up on exit) ----------
 const LOCK_PATH = path.join(STATE_DIR, 'chad.lock');
+const MAX_LOCK_AGE_MS = 1000 * 60 * 30; // 30 min
+
 try {
-  const fd = fs.openSync(LOCK_PATH, 'wx'); // fails if exists
-  fs.writeFileSync(fd, String(process.pid));
-} catch (e) {
-  console.error('Another Chad instance is already running. Exiting to avoid double posts.');
+  const st = fs.statSync(LOCK_PATH);
+  if (Date.now() - st.mtimeMs > MAX_LOCK_AGE_MS) {
+    console.warn('🧹 Stale lock detected. Removing:', LOCK_PATH);
+    fs.rmSync(LOCK_PATH, { force: true });
+  }
+} catch { /* no prior lock */ }
+
+let _lockFd = null;
+try {
+  _lockFd = fs.openSync(LOCK_PATH, 'wx'); // fail if exists
+  fs.writeFileSync(
+    _lockFd,
+    JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }, null, 2)
+  );
+} catch {
+  console.error('🚫 Another Chad instance is already running. Exiting to avoid double posts.');
   process.exit(0);
 }
-process.on('exit', () => { try { fs.unlinkSync(LOCK_PATH); } catch {} });
+
+function releaseLockAndExit(code = 0) {
+  try { if (_lockFd !== null) fs.closeSync(_lockFd); } catch {}
+  try { fs.unlinkSync(LOCK_PATH); } catch {}
+  process.exit(code);
+}
+['SIGINT','SIGTERM','SIGQUIT'].forEach(sig => process.on(sig, () => releaseLockAndExit(0)));
+process.on('uncaughtException', (err) => { console.error('Uncaught exception:', err); releaseLockAndExit(1); });
+process.on('unhandledRejection', (err) => { console.error('Unhandled rejection:', err); releaseLockAndExit(1); });
+process.on('exit', () => { try { fs.unlinkSync(LOCK_PATH); } catch {}; });
 
 // ---------- FILE HELPERS ----------
-const loadJSON = (p, fallback = {}) => {
-  try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; }
-};
-const saveJSON = (p, obj) => {
-  try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch {}
-  fs.writeFileSync(p, JSON.stringify(obj, null, 2));
-};
+const loadJSON = (p, fallback = {}) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } };
+const saveJSON = (p, obj) => { try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch {} fs.writeFileSync(p, JSON.stringify(obj, null, 2)); };
 
 // ---------- DATA ----------
 let brain = loadJSON('./brain.json', {
   roast_pool: ["default roast line"],
-  fortunes: ["default fortune"],
-  ambient: ["ambient line"],
-  stages: [] // expect entries with { number, triggers[], hints[], response, taskPrompt?, requiresGate?, timeWindow?, timeLockedReply? }
+  fortunes:  ["default fortune"],
+  ambient:   ["ambient line"],
+  facts_pool:["default fact: chad once ate a neon sign for character development."],
+  stages: []
 });
 let state = loadJSON(STATE_PATH, {}); // guildId -> { stage, gates, cooldowns, participants, hintProg }
 
 // ---------- CLIENT ----------
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers, GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
@@ -61,19 +77,16 @@ const client = new Client({
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   console.log(`State path: ${STATE_PATH}`);
-  console.log(`Stages loaded: ${(brain.stages || []).length}`);
-  console.log(`Ambient lines: ${(brain.ambient || []).length}`);
-  console.log(`Roasts: ${(brain.roast_pool || []).length}`);
+  console.log(`Stages: ${(brain.stages||[]).length} • Ambient: ${(brain.ambient||[]).length} • Roasts: ${(brain.roast_pool||[]).length}`);
+  console.log(`OpenWeather key present: ${!!OWM}`);
 
-  // Ambient: drop a random line every ~3 hours in each guild (35% chance per cycle)
+  // Ambient chatter every ~3h, 35% chance per guild
   setInterval(async () => {
-    if (!brain.ambient || !brain.ambient.length) return;
+    if (!brain.ambient?.length) return;
     for (const [gid] of client.guilds.cache) {
-      const guild = client.guilds.cache.get(gid);
-      if (!guild) continue;
-      const chan =
-        guild.systemChannel ||
-        guild.channels.cache.find(c => c?.isTextBased?.() && c.viewable);
+      const g = client.guilds.cache.get(gid);
+      if (!g) continue;
+      const chan = g.systemChannel || g.channels.cache.find(c => c?.isTextBased?.() && c.viewable);
       if (!chan) continue;
       if (Math.random() < 0.35) {
         const line = pick(brain.ambient);
@@ -84,8 +97,7 @@ client.once('ready', () => {
 });
 
 // ---------- UTILS ----------
-const pick = (arr = []) => arr[Math.floor(Math.random() * arr.length)];
-
+const pick = (arr=[]) => arr[Math.floor(Math.random() * arr.length)];
 const getGuildState = (guildId) => {
   if (!state[guildId]) {
     state[guildId] = { stage: 1, gates: {}, cooldowns: {}, participants: {}, hintProg: {} };
@@ -93,25 +105,16 @@ const getGuildState = (guildId) => {
   }
   return state[guildId];
 };
-
 const nowInWindow = (sh, sm, eh, em) => {
   const now = DateTime.now().setZone(TZ);
   const start = now.set({ hour: sh, minute: sm, second: 0, millisecond: 0 });
   const end   = now.set({ hour: eh, minute: em, second: 0, millisecond: 0 });
   return now >= start && now <= end;
 };
+const hasDailyCooldown = (gState, key) => gState.cooldowns[key] === DateTime.now().setZone(TZ).toISODate();
+const setDailyCooldown = (gState, key) => { gState.cooldowns[key] = DateTime.now().setZone(TZ).toISODate(); saveJSON(STATE_PATH, state); };
 
-const hasDailyCooldown = (gState, key) => {
-  const stamp = gState.cooldowns[key];
-  const today = DateTime.now().setZone(TZ).toISODate();
-  return stamp === today;
-};
-const setDailyCooldown = (gState, key) => {
-  gState.cooldowns[key] = DateTime.now().setZone(TZ).toISODate();
-  saveJSON(STATE_PATH, state);
-};
-
-// Place→timezone helper
+// Place→timezone
 const tzAlias = (name) => {
   const s = (name || '').toLowerCase().trim();
   if (!s) return TZ;
@@ -122,14 +125,12 @@ const tzAlias = (name) => {
   return TZ;
 };
 
-// Normalize @mention → "chad, ..."
+// Mention → "chad, ..."
 function normalizeWake(content, client) {
   const c = (content || '').trim();
   if (!client.user) return c;
   const id = client.user.id;
-  const m1 = `<@${id}>`;
-  const m2 = `<@!${id}>`;
-  if (c.startsWith(m1) || c.startsWith(m2)) {
+  if (c.startsWith(`<@${id}>`) || c.startsWith(`<@!${id}>`)) {
     const rest = c.split('>', 1)[1]?.trim() || '';
     return `chad, ${rest}`;
   }
@@ -156,13 +157,10 @@ const CA_PROV = {
   "prince edward island":"PE", quebec:"QC", saskatchewan:"SK",
   "northwest territories":"NT", nunavut:"NU", yukon:"YT"
 };
-
 function normalizeCityQuery(qRaw) {
   const q = (qRaw || "").trim();
   if (!q) return "Brandon,MB,CA";
-  // already "City,ST,CC" -> return
-  if (/[A-Za-z].*,\s*[A-Za-z]{2}\s*,\s*[A-Za-z]{2}/.test(q)) return q;
-  // Try "city, state" or "city state"
+  if (/[A-Za-z].*,\s*[A-Za-z]{2}\s*,\s*[A-Za-z]{2}/.test(q)) return q; // already City,ST,CC
   const m = q.match(/^(.+?)[,\s]+([A-Za-z .'-]+)$/);
   if (m) {
     const city = m[1].trim();
@@ -173,7 +171,7 @@ function normalizeCityQuery(qRaw) {
   return q;
 }
 
-// ---------- ROAST TRIGGER (STS homage) ----------
+// ---------- ROAST TRIGGER ----------
 const roastRegex = /(sts\b|over[-\s]?polic|too many rules|north\s*korea|rule\s*police)/i;
 async function maybeRoast(message, gState) {
   if (!roastRegex.test(message.content)) return;
@@ -225,7 +223,6 @@ function nextUniqueHint(gState, stageObj) {
   return pool[pickIdx];
 }
 
-// ---------- HINTS ----------
 async function maybeHint(message, gState, stageObj, contentNorm) {
   if (!stageObj.hints || !stageObj.hints.length) return;
   const key = `hint_${gState.stage}`;
@@ -252,27 +249,24 @@ function buildJusticeExplainer() {
 `The Motel’s “justice system” is a playful, opt-in bit. It’s for jokes and light accountability—**not** for real conflicts. Mods can override anything.`;
 
   const nominations = guides.justice?.nominations ||
-`**Nominations:** Anyone can nominate by posting in **${jailNom}** (or pinging ${dmName}) with a short reason and whether it’s SFW or NSFW Basement. Duplicate/harassing nominations are ignored.`;
+`**Nominations:** Post in **${jailNom}** (or ping ${dmName}) with a short reason and whether it’s SFW or NSFW Basement. Duplicate/harassing nominations are ignored.`;
 
   const court = guides.justice?.court ||
-`**Court flow:** ${dmName} (Dungeon Master) curates the top 3 silly “sentences” and opens a poll in **${courtCh}**. Community votes. The winner becomes the task.`;
+`**Court flow:** ${dmName} curates the top 3 silly “sentences” and opens a poll in **${courtCh}**. Community votes.`;
 
   const sentence = guides.justice?.sentence ||
-`**Sentencing:** The “defendant” is moved to **${sfwJail}** or **${nsfwJail}** for ~10 minutes. Complete the task → free + cleared. Low-effort/skip → temporary “Role of Shame” (usually 24h) or re-roll.`;
+`**Sentencing:** The “defendant” chills in **${sfwJail}** or **${nsfwJail}** ~10 minutes. Complete the task → free + cleared. Low-effort/skip → temporary “Role of Shame” (≈24h) or re-roll.`;
 
   const serious = guides.justice?.serious_matters ||
-`**Serious stuff:** Harassment, slurs, threats, doxxing, self-harm, etc. **do not** go through this bit. DM a mod/admin or use **/report**—we’ll handle it privately.`;
+`**Serious stuff:** Harassment, slurs, threats, doxxing, self-harm, etc. **do not** use the bit. DM a mod or use /report—handled privately.`;
 
   const forums = guides.justice?.forums_access ||
-`**Forums:** Long-form debates live in the Forums. To reduce drive-by toxicity, posting is **${ffName}+** only. Guests can read; earn ${ffName} by being active & chill.`;
+`**Forums:** Long-form debates live in the Forums. Posting is **${ffName}+** to dodge drive-by weird ideology. Guests can read.`;
 
   const consent = guides.justice?.consent ||
-`**Consent:** If you don’t want to be nominated, DM a mod—opt-out is respected.`;
+`**Consent:** DM a mod to opt-out of nominations—always respected.`;
 
-  return [
-    "🏛️ **Moonlit Motel — Justice System (How It Works)**",
-    summary, "", nominations, court, sentence, serious, forums, consent
-  ].join("\n");
+  return ["🏛️ **Moonlit Motel — Justice System (How It Works)**", summary, "", nominations, court, sentence, serious, forums, consent].join("\n");
 }
 
 // ---------- MYSTERY ENGINE ----------
@@ -337,12 +331,8 @@ async function handleMystery(message, contentNorm) {
     }
   }
 
-  if (!stageObj.requiresGate) {
-    gState.stage++;
-    saveJSON(STATE_PATH, state);
-  } else {
-    saveJSON(STATE_PATH, state);
-  }
+  if (!stageObj.requiresGate) { gState.stage++; saveJSON(STATE_PATH, state); }
+  else { saveJSON(STATE_PATH, state); }
 }
 
 // ---------- UTILITIES (time/weather/facts) ----------
@@ -351,26 +341,51 @@ function formatTime(zone) {
   const nice = now.toFormat("ccc, LLL d 'at' h:mm a");
   return `🕰️ ${nice} (${zone})`;
 }
-
 async function fetchWeather(qRaw) {
   if (!OWM) return { err: "Weather not set up. Ask the Innkeeper to add OPENWEATHER_API_KEY." };
-  const qNorm = normalizeCityQuery(qRaw || '');
-  const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(qNorm)}&appid=${OWM}&units=metric`;
-  const r = await fetch(url);
-  if (!r.ok) return { err: `couldn't fetch weather for "${qRaw || 'Brandon,CA'}".` };
-  const data = await r.json();
-  const d = data.weather?.[0]?.description || 'weather';
-  const t = Math.round(data.main?.temp ?? 0);
-  const f = Math.round(data.main?.feels_like ?? t);
-  const h = Math.round(data.main?.humidity ?? 0);
-  const w = Math.round((data.wind?.speed ?? 0) * 3.6); // m/s → km/h
-  const label = `${data.name || qNorm}`;
-  return { text: `🌤️ ${label}: ${d}, ${t}°C (feels ${f}°C), humidity ${h}%, wind ${w} km/h` };
-}
 
+  const original = (qRaw || '').trim();
+  const qNorm = normalizeCityQuery(original);
+
+  // try by name
+  const byName = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(qNorm)}&appid=${OWM}&units=metric`;
+  let r = await fetch(byName);
+  if (!r.ok) {
+    // fallback: geocode to lat/lon, then fetch by coords
+    const geoURL = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(qNorm)}&limit=1&appid=${OWM}`;
+    const gr = await fetch(geoURL);
+    if (gr.ok) {
+      const g = await gr.json();
+      if (Array.isArray(g) && g.length) {
+        const { lat, lon, name, state: st, country } = g[0];
+        const byCoord = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OWM}&units=metric`;
+        r = await fetch(byCoord);
+        if (r.ok) {
+          const data = await r.json();
+          const d = data.weather?.[0]?.description || 'weather';
+          const t = Math.round(data.main?.temp ?? 0);
+          const f = Math.round(data.main?.feels_like ?? t);
+          const h = Math.round(data.main?.humidity ?? 0);
+          const w = Math.round((data.wind?.speed ?? 0) * 3.6);
+          const label = `${name || data.name || qNorm}${st ? ', ' + st : ''}${country ? ', ' + country : ''}`;
+          return { text: `🌤️ ${label}: ${d}, ${t}°C (feels ${f}°C), humidity ${h}%, wind ${w} km/h` };
+        }
+      }
+    }
+    return { err: `couldn't fetch weather for "${original || qNorm}".` };
+  } else {
+    const data = await r.json();
+    const d = data.weather?.[0]?.description || 'weather';
+    const t = Math.round(data.main?.temp ?? 0);
+    const f = Math.round(data.main?.feels_like ?? t);
+    const h = Math.round(data.main?.humidity ?? 0);
+    const w = Math.round((data.wind?.speed ?? 0) * 3.6);
+    const label = `${data.name || qNorm}`;
+    return { text: `🌤️ ${label}: ${d}, ${t}°C (feels ${f}°C), humidity ${h}%, wind ${w} km/h` };
+  }
+}
 function randomFact() {
   const pool = brain.facts_pool || [];
-  if (!pool.length) return "default fact: chad once ate a neon sign for character development.";
   return pick(pool);
 }
 
@@ -424,7 +439,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Basement / NSFW helper (expanded to "who runs the basement")
+  // Basement / NSFW helper (+ cheeky "who runs" replies)
   const basementMatch =
     content.match(/^chad[, ]\s*(what\s+is|where\s+is|tell\s+me\s+about|who\s+runs)\s+the\s+basement\??[.?!]*$/i) ||
     content.match(/^chad[, ]\s*what\s+is\s+the\s+basement\??[.?!]*$/i) ||
@@ -480,7 +495,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // ---- Stage 3: collect 5 unique confessions
+  // ---- Stage 3 gate: collect 5 unique confessions
   if (gState.stage === 4 && gState.gates.s3) {
     delete gState.gates.s3; saveJSON(STATE_PATH, state);
   } else if (gState.stage === 3 && gState.gates.s3) {
@@ -499,7 +514,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // ---- Stage 6: 3 confessions + 3 jokes alternating
+  // ---- Stage 6 gate: 3 confessions + 3 jokes alternating
   if (gState.stage === 6 && gState.gates.s6) {
     const s6 = gState.gates.s6;
     const conf = /\b(i\s+(feel|am|was|think))\b/i.test(content);
@@ -521,7 +536,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // ---- Stage 7: apology + forgiveness (3:03–3:10) — gate state managed in handleMystery
+  // ---- Stage 7 gate: apology + forgiveness
   if (gState.stage === 7 && gState.gates.s7) {
     const s7 = gState.gates.s7;
     if (!s7.apologyBy && /\b(sorry|apologize|apology)\b/i.test(content)) {
@@ -535,7 +550,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // Finally, route the stage engine
+  // Finally, route to stage engine
   await handleMystery(message, content);
 });
 
