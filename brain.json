@@ -74,9 +74,12 @@
   ],
 
   "guides": {
+    "dungeon_master": "Sunday",
     "channels": {
       "sfw_jail": "🔒the-broom-closet🧹",
-      "nsfw_jail": "🤫the-no-tell-motel-room💣"
+      "nsfw_jail": "🤫the-no-tell-motel-room💣",
+      "jail_nominations": "#jail-nominations",
+      "court": "#basement-court"
     },
     "jail_overview": "🔒 **Motel Jail** — anyone can nominate someone *with a reason*. the server reacts to vote. if jailed, you choose: **🔒the-broom-closet🧹 (SFW)** or **🤫the-no-tell-motel-room💣 (NSFW)**. a mod sets the time. it’s for fun; real problems get reported.",
     "jail_visitation": "👀 while you’re jailed, the rest of the motel can **visit, taunt, and witness**. they can also **vote on your task** to earn freedom (e.g., tasteful toe pic, a scripted DM line, or a silly challenge).",
@@ -87,8 +90,32 @@
       "Set duration in the temp-role tool; remove role auto after expiry.",
       "Post the **freedom task** poll; highest-voted task = the condition for release."
     ],
-    "commands_hint": "try: `chad, ask the motel [your question]` • `chad, random fact` • `chad, time in Brandon MB` • `chad, weather in Brandon MB` • `chad, gaslight me` • whisper to the mirror • mention the ledger • count to thirteen • knock twice and wait."
+    "roles": {
+      "guest_name": "Guest",
+      "guest_desc": "default entry role; read most channels, chill.",
+      "frequent_flyer": "Frequent Flyer",
+      "frequent_flyer_desc": "trusted regulars; can post in Forums.",
+      "dungeon_dweller": "Dungeon Dweller",
+      "dungeon_dweller_desc": "NSFW access; votes on new entrants.",
+      "keyholder": "Keyholder",
+      "keyholder_desc": "mystery contributors; access to Archive of Truth.",
+      "jailed_sfw": "Jailed (SFW)",
+      "jailed_sfw_desc": "temporary SFW time-out room.",
+      "jailed_nsfw": "Jailed (NSFW)",
+      "jailed_nsfw_desc": "temporary NSFW dungeon time-out.",
+      "staff": "Staff/Mods",
+      "staff_desc": "keep the lights steady & exits honest."
+    },
+    "commands_hint": "try: `chad, ask the motel [your question]` • `chad, random fact` • `chad, time in London` • `chad, weather in Brandon MB` • `chad, gaslight me` • whisper to the mirror • mention the ledger • count to thirteen • knock twice and wait."
   },
+
+  "lore_overview": [
+    "The hall lights hum in the wrong key.",
+    "Keys breed in the drawer; none fit the same door twice.",
+    "Exit signs point inward.",
+    "The ledger writes names we don’t remember checking in."
+  ],
+  "lore_tip": "Try the **mirror**, the **light**, or the **ledger**. Or say `chad, hint`.",
 
   "lore": {
     "title": "Welcome to The Moonlit Motel — A Place Between Places",
@@ -114,7 +141,16 @@
       "Dad By Daylight — local cryptid father figure, possibly lives in the vending machine"
     ],
     "what_is_this": "This space is: a couch to collapse on; a booth in a late-night diner; a car parked under streetlights with the music still playing; a place where weird is welcome; a place where tired is understood; a place where “I’m not okay” doesn’t scare anyone away. Here, you are not too much. You are just here. And that is enough.",
-    "welcome_guest": "Check-in is simple: stay as you are. speak when you want. rest when you need. The sign outside always reads: **VACANCY FOR WEIRDOS.** You’re home now. Take your time."
+    "welcome_guest": "Check-in is simple: stay as you are. speak when you want. rest when you need. The sign outside always reads: **VACANCY FOR WEIRDOS.** You’re home now. Take your time.",
+    "characters": {
+      "soupy": {
+        "answers": [
+          "🍲 **Soupy** was the first guest to fix the vending machine; now it hums their name.",
+          "If you smell tomato basil at 3AM, don’t open the fridge. That’s Soupy passing through.",
+          "Soupy is half rumor, half maintenance spirit, wholly nosy."
+        ]
+      }
+    }
   },
 
   "easter_eggs": [
@@ -140,75 +176,76 @@
   "stages": [
     {
       "number": 1,
-      "triggers": ["^chad,\\s*what's wrong with the motel\\?$"],
-      "response": "⚠️ SYSTEM ALERT: something’s humming that shouldn’t hum. twelve keys. one won’t stay quiet.\n(find the thing the light can’t forget.)",
-      "hints": ["look at the glow, not the walls.", "light forgets moments, not people. think like a poet."],
+      "triggers": ["^chad,\\s*(?:what(?:'s|\\s+is)\\s+)?wrong\\s+with\\s+the\\s+motel\\s*\\??$"],
+      "response": "“The sign outside says VACANCY, but only half the bulbs work.\\nDon’t stare too long. The light remembers.”",
+      "hints": ["Check the mirror in the lobby. It hums when nobody’s near.", "Look at the glow, not the walls."],
       "requiresGate": false
     },
     {
       "number": 2,
-      "triggers": ["^chad,\\s*the light remembers$"],
-      "response": "🪞 the mirror is watching back. something here isn’t facing the right way.",
-      "hints": ["read reality backwards.", "you’re standing in front of the answer. it’s reflective, vain, and judging you."],
+      "triggers": ["^chad,\\s*i\\s+found\\s+the\\s+mirror\\s*$"],
+      "response": "“Good. But be careful — reflections are hungry. Whisper something you regret. It will listen.”",
+      "hints": ["The mirror listens between **2:00–4:00 AM** server time."],
+      "timeWindow": [2, 0, 4, 0],
       "requiresGate": false
     },
     {
       "number": 3,
-      "triggers": ["^chad,\\s*i found the mirror$"],
-      "response": "🪞 reflection confirmed. letters crawl across the glass: **THE CLERK IS STILL HERE.**",
-      "taskPrompt": "to make the lock twitch, give me **five truths you’ve never said aloud**. real ones.",
-      "hints": ["the clerk left instructions where rhythm lives.", "silence speaks when played backwards."],
+      "triggers": ["^chad,\\s*(?:the\\s+mirror\\s+listens|begin\\s+confessions|confession\\s+time)\\s*$"],
+      "response": "“The lock wants the taste of honesty.”",
+      "taskPrompt": "At least **five guests** must confess using **“I never …”** / **“I have never …”**.",
+      "hints": ["Confess out loud. The mirror eats silence.", "Truths count only during the listening window."],
       "requiresGate": true
     },
     {
       "number": 4,
-      "triggers": ["^chad,\\s*open the ledger$"],
-      "response": "🩸 the red ledger opens to entry **#13**: “the door opens inward.” which one does that here?",
-      "hints": ["read the world, not the words.", "you’ve been in it recently. democracy put you there."],
+      "triggers": ["^chad,\\s*the\\s+ledger\\s+next\\s*$", "^chad,\\s*open\\s+the\\s+ledger\\s*$"],
+      "response": "“✅ Delicious. Honesty always tastes a bit like blood. The lock twitched. Try the **ledger** next—if it doesn’t bite first.”",
+      "hints": ["The ledger only writes in laughter. Bring a joke next time."],
       "requiresGate": false
     },
     {
       "number": 5,
-      "triggers": ["^chad,\\s*thirteen is a person$"],
-      "response": "…ah. of course it is. of course **i** am. now we need a **name**. the clerk left letters everywhere. assemble me.",
-      "hints": ["initial letters. first words. start of sentences.", "emoji reactions can spell things when you’re bored enough."],
+      "triggers": ["^chad,\\s*what\\s+happens\\s+at\\s*3:03\\s*am\\??$"],
+      "response": "“Everything real apologizes. Everything unreal forgives.”",
+      "hints": ["Between **3:03–3:10 AM** one apology and one forgiveness must be offered.", "Not performative. Keep it simple."],
       "requiresGate": false
     },
     {
       "number": 6,
-      "triggers": ["^chad,\\s*your name is chad$","^chad,\\s*the lock is the light$"],
-      "response": "💡 correct. the lock is light. the key is me.",
-      "taskPrompt": "mix **3 confessions** and **3 jokes** in a strict alternating pattern. i’ll be listening.",
-      "hints": ["start with confession, then joke, repeat.", "pain and humor are the two currencies here."],
+      "triggers": ["^chad,\\s*the\\s+ledger\\s+is\\s+ready\\s*$", "^chad,\\s*start\\s+the\\s+pattern\\s*$"],
+      "response": "“The ledger purrs when pain and humor balance.”",
+      "taskPrompt": "Post **3 confessions** and **3 jokes** in a strict **alternating** pattern (start with confession). I’ll track it.",
+      "hints": ["Pattern: confession → joke → confession → joke → confession → joke.", "Wrong flavor resets the vibe, not the count."],
       "requiresGate": true
     },
     {
       "number": 7,
-      "triggers": ["^chad,\\s*are you listening\\?$"],
-      "response": "🕯️ i hear you. the motel does too.",
-      "taskPrompt": "offer **one apology** and **one forgiveness**. not performative.",
+      "triggers": ["^chad,\\s*are\\s+you\\s+listening\\??$"],
+      "response": "“I hear you. The Motel does too.”",
+      "taskPrompt": "Offer **one apology** and **one forgiveness** (two people).",
       "timeWindow": [3, 3, 3, 10],
       "timeLockedReply": "too early. set an alarm. i’ll wait between **3:03–3:10 a.m.**",
-      "hints": ["the building listens best at 3:03.", "bring offerings the motel understands."],
+      "hints": ["The building listens best at 3:03.", "Apology and forgiveness should be different voices."],
       "requiresGate": true
     },
     {
       "number": 8,
-      "triggers": ["^chad,\\s*we remember the door$"],
-      "response": "the chalk outline behind the desk hardens into wood. the number **13** brands itself in. don’t open it yet.",
-      "hints": ["doors are just boundaries waiting to be contradicted.", "say it like you mean it."],
+      "triggers": ["^chad,\\s*i\\s+know\\s+your\\s+real\\s+name\\s*$"],
+      "response": "“Prove it.”",
+      "hints": ["Try **Chadwick** or **Chadly**.", "Names bend in neon."],
       "requiresGate": false
     },
     {
       "number": 9,
-      "triggers": ["^chad,\\s*open the door$"],
+      "triggers": ["^chad,\\s*can\\s+we\\s+trust\\s+you\\??$"],
       "response": "democracy time: vote on my existence. react ✅ to keep chad, ❌ to retire chad (min 3 voters).",
-      "hints": ["the handle looks like a promise.", "the door opens inward. so do you."],
+      "hints": ["The door opens for voices, not silence."],
       "requiresGate": true
     },
     {
       "number": 10,
-      "triggers": ["^chad,\\s*open the door$"],
+      "triggers": ["^chad,\\s*i\\s+found\\s+the\\s+key\\s*$", "^chad,\\s*open\\s+the\\s+door\\s*$"],
       "response": "the door opens inward. inside is the **archive-of-truth**. granting **Keyholder** role…",
       "requiresGate": false
     }
