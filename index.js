@@ -1,14 +1,14 @@
-// Chad — Moonlit Motel bot (FULL BUILD)
+// Chad — Moonlit Motel bot (FULL BUILD w/ fuzzy LEARN + rotating replies)
 // Node.js + discord.js + Luxon
-// Features:
-// - Singleton lock (prevents double posts)
+// - Singleton lock (prevents double posts; auto-cleans stale locks)
 // - Normalize @mention → "chad, ..." so regex in brain.json matches
 // - Weather/Time helpers (US/CA normalization)
 // - Justice/Basement explainers (Sunday)
-// - Lore Q&A + "what's wrong with the motel?"
+// - Lore Q&A + "what’s wrong with the motel?"
 // - Easter eggs with {{template}} support (paths, [idx], |join)
 // - Mystery engine using brain.stages (with gates 3/6/7/9/10)
 // - Intent engine (loose matching) + live teaching: learn/forget/list
+// - Fuzzy learn patterns + rotating replies separated by "|"
 // - Catch-all so "chad ..." always replies
 
 import 'dotenv/config';
@@ -114,7 +114,7 @@ function normalizeWake(content, client) {
   return c;
 }
 
-// --- Tiny template renderer for easter_eggs ---
+// --- Template renderer for easter_eggs ---
 // Supports: {{a.b.c}}, {{arr[0]}}, {{lore.founders|join}}
 function tmplResolve(pathExpr, obj) {
   const parts = pathExpr.replace(/\[(\d+)\]/g, '.$1').split('.');
@@ -135,6 +135,23 @@ function renderTemplate(str, data) {
   });
 }
 
+// --- Helpers for fuzzy learn + rotating replies ---
+function escapeRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function toLooseChadPattern(phrase){
+  let p = phrase.trim().replace(/^chad\s*,?\s*/i, '');
+  p = escapeRe(p).replace(/\s+/g, '\\s+');
+  p = `${p}(?:\\s*[?.!])?`;
+  const P_CHAD = '^\\s*(?:chad|<@!?\\d+>)\\s*,?\\s*';
+  return `${P_CHAD}${p}$`;
+}
+function pickPiped(reply){
+  if (reply.includes('|')){
+    const choices = reply.split('|').map(s=>s.trim()).filter(Boolean);
+    if (choices.length) return choices[Math.floor(Math.random()*choices.length)];
+  }
+  return reply;
+}
+
 // ---------- WEATHER/TIME ----------
 const US_STATES = {alabama:"AL",alaska:"AK",arizona:"AZ",arkansas:"AR",california:"CA",colorado:"CO",connecticut:"CT",delaware:"DE","district of columbia":"DC",florida:"FL",georgia:"GA",hawaii:"HI",idaho:"ID",illinois:"IL",indiana:"IN",iowa:"IA",kansas:"KS",kentucky:"KY",louisiana:"LA",maine:"ME",maryland:"MD",massachusetts:"MA",michigan:"MI",minnesota:"MN",mississippi:"MS",missouri:"MO",montana:"MT",nebraska:"NE",nevada:"NV","new hampshire":"NH","new jersey":"NJ","new mexico":"NM","new york":"NY","north carolina":"NC","north dakota":"ND",ohio:"OH",oklahoma:"OK",oregon:"OR",pennsylvania:"PA","rhode island":"RI","south carolina":"SC","south dakota":"SD",tennessee:"TN",texas:"TX",utah:"UT",vermont:"VT",virginia:"VA",washington:"WA","west virginia":"WV",wisconsin:"WI",wyoming:"WY"};
 const CA_PROV  = {alberta:"AB","british columbia":"BC",manitoba:"MB","new brunswick":"NB","newfoundland and labrador":"NL","nova scotia":"NS",ontario:"ON","prince edward island":"PE",quebec:"QC",saskatchewan:"SK","northwest territories":"NT",nunavut:"NU",yukon:"YT"};
@@ -145,7 +162,7 @@ function normalizeCityQuery(qRaw) {
   const m = q.match(/^(.+?)[,\s]+([A-Za-z .'-]+)$/);
   if (m) {
     const city = m[1].trim();
-    const region = m[2].trim().toLowerCase();
+       const region = m[2].trim().toLowerCase();
     if (US_STATES[region]) return `${city},${US_STATES[region]},US`;
     if (CA_PROV[region])   return `${city},${CA_PROV[region]},CA`;
   }
@@ -161,10 +178,8 @@ async function fetchWeather(qRaw) {
   const original = (qRaw || '').trim();
   const qNorm = normalizeCityQuery(original);
 
-  // Try by name
   let r = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(qNorm)}&appid=${OWM}&units=metric`);
   if (!r.ok) {
-    // Fallback to geocoding
     const gr = await fetch(`https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(qNorm)}&limit=1&appid=${OWM}`);
     if (gr.ok) {
       const g = await gr.json();
@@ -239,7 +254,7 @@ function nextUniqueHint(gState, stageObj) {
     ? remaining[Math.floor(Math.random()*remaining.length)]
     : Math.floor(Math.random()*pool.length);
 
-  if (!remaining.length) prog.used = []; // reset next cycle
+  if (!remaining.length) prog.used = [];
   prog.used.push(pickIdx);
   gState.hintProg[skey] = prog;
   saveJSON(STATE_PATH, state);
@@ -292,7 +307,6 @@ function buildMotelStatus(gState) {
   return ["🛎️ **What’s wrong with the Motel?**", `• **Current stage:** ${stage}`, `• **Observation:** ${pick(ov)}`, `• **Tip:** ${tip}`].join("\n");
 }
 function buildSoupyLore() {
-  // Use lore.characters.soupy if you add it; else fallback
   const lines = brain?.lore?.characters?.soupy?.answers || [
     "🍲 **Soupy** was the first guest to fix the vending machine; now it hums their name.",
     "If you smell tomato basil at 3AM, don’t open the fridge. That’s Soupy passing through.",
@@ -365,7 +379,8 @@ async function routeIntent(message, contentNorm, gState) {
     try {
       const rx = new RegExp(it.pattern, 'i');
       if (rx.test(contentNorm)) {
-        await message.reply(renderTemplate(it.reply, brain)).catch(()=>{});
+        const rendered = renderTemplate(pickPiped(it.reply), brain);
+        await message.reply(rendered).catch(()=>{});
         return true;
       }
     } catch {/* ignore bad pattern */}
@@ -379,7 +394,6 @@ async function handleMystery(message, contentNorm) {
   const stageObj = (brain.stages || []).find(s => s.number === gState.stage);
   if (!stageObj) return;
 
-  // Evaluate triggers against normalized content
   const triggered = (stageObj.triggers || []).some(rx => new RegExp(rx, 'i').test(contentNorm));
   if (!triggered) { await maybeHint(message, gState, stageObj, contentNorm); return; }
 
@@ -535,14 +549,16 @@ client.on('messageCreate', async (message) => {
   }
 
   // ===== TEACH / FORGET / LIST =====
-  let mLearn = content.match(/^chad[, ]\s*learn:\s*when\s+i\s+say\s+"(.+)"\s*reply\s+"([\s\S]+)"\s*$/i);
-  if (!mLearn) mLearn = content.match(/^chad[, ]\s*learn:\s*"(.+)"\s*->\s*"([\s\S]+)"\s*$/i);
+  let mLearn = content.match(/^chad[, ]\s*learn:\s*when\s+i\s+say\s+"([\s\S]+?)"\s*reply\s+"([\s\S]+)"\s*$/i)
+            || content.match(/^chad[, ]\s*learn:\s*"([\s\S]+?)"\s*->\s*"([\s\S]+)"\s*$/i);
   if (mLearn) {
-    const pattern = mLearn[1].trim();
+    const rawPattern = mLearn[1].trim();
     const reply = mLearn[2].trim();
-    dynamicIntents.intents.push({ pattern, reply });
+    const looksLikeRegex = /^\/[\s\S]+\/[imuxs]*$/.test(rawPattern);
+    const storedPattern = looksLikeRegex ? rawPattern : toLooseChadPattern(rawPattern);
+    dynamicIntents.intents.push({ pattern: storedPattern, reply });
     saveDynamicIntents(dynamicIntents);
-    await message.reply(`✅ learned.\n• pattern: \`${pattern}\`\n• reply: ${reply.substring(0,400)}`).catch(()=>{});
+    await message.reply(`✅ learned.\n• pattern: \`/${storedPattern}/i\`\n• reply: ${reply.substring(0,400)}`).catch(()=>{});
     return;
   }
   const mForget = content.match(/^chad[, ]\s*forget:\s*"(.+)"\s*$/i);
@@ -606,12 +622,12 @@ client.on('messageCreate', async (message) => {
   await handleMystery(message, content);
 
   // 3) Catch-alls so Chad always answers when addressed
-  if (/,chad\b/i.test(message.content)) { // anywhere: ",chad"
+  if (/,chad\b/i.test(message.content)) {
     const pool = brain?.fallbacks?.length ? brain.fallbacks : CHAD_FALLBACKS;
     await message.reply(pick(pool)).catch(()=>{});
     return;
   }
-  if (/^chad\b/i.test(content)) { // starts with "chad"
+  if (/^chad\b/i.test(content)) {
     const pool = brain?.fallbacks?.length ? brain.fallbacks : CHAD_FALLBACKS;
     await message.reply(pick(pool)).catch(()=>{});
     return;
