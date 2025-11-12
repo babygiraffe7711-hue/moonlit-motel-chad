@@ -1,4 +1,6 @@
-// index.js (safe /data fallback)
+// index.js (utility + mystery + lore)
+// — adds time, weather, random fact; keeps your full logic
+
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField } from 'discord.js';
 import fs from 'fs';
@@ -6,8 +8,9 @@ import path from 'path';
 import { DateTime } from 'luxon';
 
 const TZ = process.env.TIMEZONE || 'America/New_York';
+const OWM = process.env.OPENWEATHER_API_KEY || null; // <-- add this in Render if you want weather
 
-// Use /data if a disk is mounted; otherwise use local file
+// prefer /data if mounted (paid disk), else local file (free tier)
 const STATE_DIR = fs.existsSync('/data') ? '/data' : path.resolve('./');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 
@@ -21,9 +24,10 @@ const saveJSON = (p, obj) => {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2));
 };
 
-let brain = loadJSON('./brain.json');   // dialogue + stages
-let state = loadJSON(STATE_PATH, {});   // per-guild progress
+let brain = loadJSON('./brain.json');
+let state = loadJSON(STATE_PATH, {});
 
+// ---------- discord client ----------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages,
@@ -37,23 +41,24 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
   console.log(`Using state path: ${STATE_PATH}`);
 
-  // Ambient “hauntings” (every ~3 hours)
+  // Ambient: drop a random line every ~3 hours
   setInterval(async () => {
-    if (!brain.ambient || brain.ambient.length === 0) return;
-    for (const [guildId] of client.guilds.cache) {
-      const guild = client.guilds.cache.get(guildId);
+    if (!brain.ambient || !brain.ambient.length) return;
+    for (const [gid] of client.guilds.cache) {
+      const guild = client.guilds.cache.get(gid);
       if (!guild) continue;
       const chan = guild.systemChannel || guild.channels.cache.find(c => c.isTextBased?.() && c.viewable);
       if (!chan) continue;
       if (Math.random() < 0.35) {
-        const line = brain.ambient[Math.floor(Math.random()*brain.ambient.length)];
+        const line = pick(brain.ambient);
         await chan.send(line);
       }
     }
   }, 1000 * 60 * 60 * 3);
 });
 
-// ---------- utils ----------
+// ---------- small utils ----------
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const getGuildState = (guildId) => {
   if (!state[guildId]) {
     state[guildId] = { stage: 1, gates: {}, cooldowns: {}, participants: {} };
@@ -77,15 +82,25 @@ const setDailyCooldown = (gState, key) => {
   saveJSON(STATE_PATH, state);
 };
 
-// ---------- roast trigger (STS homage) ----------
+// Very small place→timezone helper for common motel locales
+const tzAlias = (name) => {
+  const s = (name || '').toLowerCase().trim();
+  if (!s) return TZ;
+  if (/(brandon|manitoba|winnipeg|mb|prairies)/i.test(name)) return 'America/Winnipeg';
+  if (/new york|nyc|eastern/i.test(name)) return 'America/New_York';
+  if (/la|los angeles|pacific/i.test(name)) return 'America/Los_Angeles';
+  if (/london|uk|gmt|britain/i.test(name)) return 'Europe/London';
+  return TZ; // fallback to server TZ
+};
+
+// ---------- roast homage ----------
 const roastRegex = /(sts\b|over[-\s]?polic|too many rules|north\s*korea|rule\s*police)/i;
 async function maybeRoast(message, gState) {
   if (!roastRegex.test(message.content)) return;
   if (hasDailyCooldown(gState, 'roast_daily')) return;
   const pool = brain.roast_pool || [];
   if (!pool.length) return;
-  const line = pool[Math.floor(Math.random()*pool.length)];
-  await message.reply(line);
+  await message.reply(pick(pool));
   setDailyCooldown(gState, 'roast_daily');
 }
 
@@ -110,26 +125,25 @@ async function ensureArchiveChannel(guild, role) {
   return chan;
 }
 
-// ---------- hint system ----------
+// ---------- hints ----------
 async function maybeHint(message, gState, stageObj) {
   if (!stageObj.hints || !stageObj.hints.length) return;
   const key = `hint_${gState.stage}`;
   if (hasDailyCooldown(gState, key)) return;
   if (/^chad[, ]/i.test(message.content)) {
-    const hint = stageObj.hints[Math.floor(Math.random()*stageObj.hints.length)];
-    await message.channel.send(hint);
+    await message.channel.send(pick(stageObj.hints));
     setDailyCooldown(gState, key);
   }
 }
 
-// ---------- stage engine ----------
+// ---------- mystery engine ----------
 async function handleMystery(message) {
   const gState = getGuildState(message.guild.id);
   const stageObj = (brain.stages || []).find(s => s.number === gState.stage);
   if (!stageObj) return;
 
-  const triggerHit = (stageObj.triggers || []).some(rx => new RegExp(rx, 'i').test(message.content));
-  if (!triggerHit) { await maybeHint(message, gState, stageObj); return; }
+  const triggered = (stageObj.triggers || []).some(rx => new RegExp(rx, 'i').test(message.content));
+  if (!triggered) { await maybeHint(message, gState, stageObj); return; }
 
   if (stageObj.timeWindow) {
     const [sh, sm, eh, em] = stageObj.timeWindow;
@@ -192,36 +206,99 @@ async function handleMystery(message) {
   }
 }
 
-// ---------- message & reaction handlers ----------
+// ---------- utilities: time / weather / facts ----------
+function formatTime(zone) {
+  const now = DateTime.now().setZone(zone || TZ);
+  const nice = now.toFormat("ccc, LLL d 'at' h:mm a");
+  return `🕰️ ${nice} (${zone})`;
+}
+async function fetchWeather(qRaw) {
+  if (!OWM) return { err: "Weather not set up. Ask the Innkeeper to add OPENWEATHER_API_KEY." };
+  const q = (qRaw || '').trim() || 'Brandon,CA';
+  const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(q)}&appid=${OWM}&units=metric`;
+  const r = await fetch(url);
+  if (!r.ok) return { err: `couldn't fetch weather for "${q}".` };
+  const data = await r.json();
+  const d = data.weather?.[0]?.description || 'weather';
+  const t = Math.round(data.main?.temp ?? 0);
+  const f = Math.round(data.main?.feels_like ?? t);
+  const h = Math.round(data.main?.humidity ?? 0);
+  const w = Math.round((data.wind?.speed ?? 0) * 3.6); // m/s → km/h
+  return { text: `🌤️ ${q}: ${d}, ${t}°C (feels ${f}°C), humidity ${h}%, wind ${w} km/h` };
+}
+function randomFact() {
+  const pool = brain.facts_pool || [];
+  if (!pool.length) return "default fact: chad once ate a neon sign for character development.";
+  return pick(pool);
+}
+
+// ---------- message & reactions ----------
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
   const gState = getGuildState(message.guild.id);
   gState.participants[message.author.id] = true;
 
+  // roast homage
   await maybeRoast(message, gState);
 
-  // Ask the motel
-  if (/^chad,\s*ask the motel\b/i.test(message.content)) {
+  const content = message.content;
+
+  // ask the motel
+  if (/^chad,\s*ask the motel\b/i.test(content)) {
     const pool = brain.fortunes || [];
-    if (pool.length) {
-      const line = pool[Math.floor(Math.random()*pool.length)];
-      await message.reply(line);
+    if (pool.length) { await message.reply(pick(pool)); return; }
+  }
+
+  // random fact
+  if (/^chad,\s*(random fact|fact)$/i.test(content)) {
+    await message.reply(`📎 ${randomFact()}`);
+    return;
+  }
+
+  // time: chad, time | chad, time in <place>
+  const timeMatch = content.match(/^chad,\s*time(?:\s+in\s+(.+))?$/i) || content.match(/^chad,\s*what(?:'s| is)\s+the\s+time(?:\s+in\s+(.+))?$/i);
+  if (timeMatch) {
+    const place = timeMatch[1];
+    const zone = tzAlias(place);
+    await message.reply(formatTime(zone));
+    return;
+  }
+
+  // weather: chad, weather | chad, weather in <city>
+  const wMatch = content.match(/^chad,\s*weather(?:\s+in\s+(.+))?$/i) || content.match(/^chad,\s*what(?:'s| is)\s+the\s+weather(?:\s+in\s+(.+))?$/i);
+  if (wMatch) {
+    const city = (wMatch[1] || '').trim();
+    const res = await fetchWeather(city);
+    if (res.err) await message.reply(`⚠️ ${res.err}`);
+    else await message.reply(res.text);
+    return;
+  }
+
+  // Easter eggs
+  for (const egg of (brain.easter_eggs || [])) {
+    const re = new RegExp(egg.trigger_regex, 'i');
+    if (re.test(content)) {
+      if (egg.responses_key && brain[egg.responses_key]) {
+        await message.reply(pick(brain[egg.responses_key]));
+      } else if (egg.responses && egg.responses.length) {
+        await message.reply(pick(egg.responses));
+      }
       return;
     }
   }
 
-  // Stage 3: confessions (5 unique)
+  // mystery routing (after collectors below)
+  // ---- stage 3 confession collector (5 unique)
   if (gState.stage === 4 && gState.gates.s3) {
     delete gState.gates.s3; saveJSON(STATE_PATH, state);
   } else if (gState.stage === 3 && gState.gates.s3) {
-    const isConfession = /(\bi never\b|\bi’ve?\s+never\b|\bi have never\b)/i.test(message.content);
+    const isConfession = /(\bi never\b|\bi’ve?\s+never\b|\bi have never\b)/i.test(content);
     if (isConfession) {
       gState.gates.s3.confessors[message.author.id] = true;
       const count = Object.keys(gState.gates.s3.confessors).length;
       if (count >= 5) {
         await message.channel.send("✅ *Delicious.* Honesty always tastes a bit like blood. The lock twitched. Try the **ledger** next—if it doesn’t bite first.");
-        gState.stage = 4;
-        delete gState.gates.s3;
+        gState.stage = 4; delete gState.gates.s3;
       } else {
         await message.channel.send(`confession logged (${count}/5). the motel is listening.`);
       }
@@ -230,11 +307,11 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // Stage 6: 3 confessions + 3 jokes alternating
+  // ---- stage 6 pattern (3 confessions + 3 jokes alternating)
   if (gState.stage === 6 && gState.gates.s6) {
     const s6 = gState.gates.s6;
-    const conf = /\b(i\s+(feel|am|was|think))\b/i.test(message.content);
-    const joke = /(lol|lmao|😂|meme)/i.test(message.content);
+    const conf = /\b(i\s+(feel|am|was|think))\b/i.test(content);
+    const joke = /(lol|lmao|😂|meme)/i.test(content);
     if (conf || joke) {
       const want = s6.sequence.length % 2 === 0 ? 'conf' : 'joke';
       const typ = conf ? 'conf' : 'joke';
@@ -244,8 +321,7 @@ client.on('messageCreate', async (message) => {
         await message.channel.send(`pattern accepted (${progress}/6).`);
         if (progress >= 6) {
           await message.channel.send("✅ The light purrs. Doors adjust their posture. Something’s ready to be said out loud.");
-          gState.stage = 7;
-          delete gState.gates.s6; saveJSON(STATE_PATH, state);
+          gState.stage = 7; delete gState.gates.s6; saveJSON(STATE_PATH, state);
         } else saveJSON(STATE_PATH, state);
       } else {
         await message.channel.send("nope. wrong flavor. alternate confession ↔ joke.");
@@ -253,21 +329,21 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // Stage 7: apology + forgiveness
+  // ---- stage 7 (apology + forgiveness at 3:03–3:10 a.m.)
   if (gState.stage === 7 && gState.gates.s7) {
     const s7 = gState.gates.s7;
-    if (!s7.apologyBy && /\b(sorry|apologize|apology)\b/i.test(message.content)) {
+    if (!s7.apologyBy && /\b(sorry|apologize|apology)\b/i.test(content)) {
       s7.apologyBy = message.author.id;
       await message.channel.send("apology archived. one more: forgiveness.");
       saveJSON(STATE_PATH, state);
-    } else if (!s7.forgivenessBy && /\b(i forgive|i’m forgiving|i forgive you)\b/i.test(message.content)) {
+    } else if (!s7.forgivenessBy && /\b(i forgive|i’m forgiving|i forgive you)\b/i.test(content)) {
       s7.forgivenessBy = message.author.id;
       await message.channel.send("✅ Accepted. The walls exhaled. next time, bring snacks.");
-      gState.stage = 8;
-      delete gState.gates.s7; saveJSON(STATE_PATH, state);
+      gState.stage = 8; delete gState.gates.s7; saveJSON(STATE_PATH, state);
     }
   }
 
+  // finally, route to stage triggers & responses
   await handleMystery(message);
 });
 
