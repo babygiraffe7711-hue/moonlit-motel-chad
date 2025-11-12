@@ -1,0 +1,12 @@
+{
+  "roast_pool": [
+    "default roast line"
+  ],
+  "fortunes": [
+    "default fortune"
+  ],
+  "ambient": [
+    "ambient line"
+  ],
+  "stages": []
+}
