@@ -136,6 +136,42 @@ function normalizeWake(content, client) {
   return c;
 }
 
+// --- Location normalizer for weather (city + state/province → city,STATE,COUNTRY)
+const US_STATES = {
+  alabama:"AL", alaska:"AK", arizona:"AZ", arkansas:"AR", california:"CA",
+  colorado:"CO", connecticut:"CT", delaware:"DE", "district of columbia":"DC",
+  florida:"FL", georgia:"GA", hawaii:"HI", idaho:"ID", illinois:"IL",
+  indiana:"IN", iowa:"IA", kansas:"KS", kentucky:"KY", louisiana:"LA",
+  maine:"ME", maryland:"MD", massachusetts:"MA", michigan:"MI", minnesota:"MN",
+  mississippi:"MS", missouri:"MO", montana:"MT", nebraska:"NE", nevada:"NV",
+  "new hampshire":"NH", "new jersey":"NJ", "new mexico":"NM", "new york":"NY",
+  "north carolina":"NC", "north dakota":"ND", ohio:"OH", oklahoma:"OK",
+  oregon:"OR", pennsylvania:"PA", "rhode island":"RI", "south carolina":"SC",
+  "south dakota":"SD", tennessee:"TN", texas:"TX", utah:"UT", vermont:"VT",
+  virginia:"VA", washington:"WA", "west virginia":"WV", wisconsin:"WI", wyoming:"WY"
+};
+const CA_PROV = {
+  alberta:"AB", "british columbia":"BC", manitoba:"MB", "new brunswick":"NB",
+  "newfoundland and labrador":"NL", "nova scotia":"NS", ontario:"ON",
+  "prince edward island":"PE", quebec:"QC", saskatchewan:"SK",
+  "northwest territories":"NT", nunavut:"NU", yukon:"YT"
+};
+function normalizeCityQuery(qRaw) {
+  const q = (qRaw || "").trim();
+  if (!q) return "Brandon,MB,CA";
+  // already "City,ST,CC"
+  if (/[A-Za-z].*,\s*[A-Za-z]{2}\s*,\s*[A-Za-z]{2}/.test(q)) return q;
+  // "city, state" or "city state"
+  const m = q.match(/^(.+?)[,\s]+([A-Za-z .'-]+)$/);
+  if (m) {
+    const city = m[1].trim();
+    const region = m[2].trim().toLowerCase();
+    if (US_STATES[region]) return `${city},${US_STATES[region]},US`;
+    if (CA_PROV[region])   return `${city},${CA_PROV[region]},CA`;
+  }
+  return q;
+}
+
 // ---------- ROAST TRIGGER (STS homage) ----------
 const roastRegex = /(sts\b|over[-\s]?polic|too many rules|north\s*korea|rule\s*police)/i;
 async function maybeRoast(message, gState) {
@@ -279,17 +315,18 @@ function formatTime(zone) {
 
 async function fetchWeather(qRaw) {
   if (!OWM) return { err: "Weather not set up. Ask the Innkeeper to add OPENWEATHER_API_KEY." };
-  const q = (qRaw || '').trim() || 'Brandon,CA';
-  const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(q)}&appid=${OWM}&units=metric`;
+  const qNorm = normalizeCityQuery(qRaw || '');
+  const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(qNorm)}&appid=${OWM}&units=metric`;
   const r = await fetch(url);
-  if (!r.ok) return { err: `couldn't fetch weather for "${q}".` };
+  if (!r.ok) return { err: `couldn't fetch weather for "${qRaw || 'Brandon,CA'}".` };
   const data = await r.json();
   const d = data.weather?.[0]?.description || 'weather';
   const t = Math.round(data.main?.temp ?? 0);
   const f = Math.round(data.main?.feels_like ?? t);
   const h = Math.round(data.main?.humidity ?? 0);
   const w = Math.round((data.wind?.speed ?? 0) * 3.6); // m/s → km/h
-  return { text: `🌤️ ${q}: ${d}, ${t}°C (feels ${f}°C), humidity ${h}%, wind ${w} km/h` };
+  const label = `${data.name || qNorm}`;
+  return { text: `🌤️ ${label}: ${d}, ${t}°C (feels ${f}°C), humidity ${h}%, wind ${w} km/h` };
 }
 
 function randomFact() {
@@ -349,16 +386,18 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Basement / NSFW helper
+  // Basement / NSFW helper (expanded to "who runs the basement")
   const basementMatch =
-    content.match(/^chad[, ]\s*(what\s+is|where\s+is|tell\s+me\s+about)\s+the\s+basement\??[.?!]*$/i) ||
+    content.match(/^chad[, ]\s*(what\s+is|where\s+is|tell\s+me\s+about|who\s+runs)\s+the\s+basement\??[.?!]*$/i) ||
     content.match(/^chad[, ]\s*what\s+is\s+the\s+basement\??[.?!]*$/i) ||
-    content.match(/^chad[, ]\s*where\s+is\s+the\s+basement\??[.?!]*$/i);
+    content.match(/^chad[, ]\s*where\s+is\s+the\s+basement\??[.?!]*$/i) ||
+    content.match(/^chad[, ]\s*who\s+runs\s+the\s+basement\??[.?!]*$/i);
 
   if (basementMatch) {
     const sfw  = brain?.guides?.channels?.sfw_jail  || "🔒the-broom-closet🧹";
     const nsfw = brain?.guides?.channels?.nsfw_jail || "🤫the-no-tell-motel-room💣";
-    const line1 = "we call the NSFW wing **the Basement**. access is gated by **Dungeon Dwellers**.";
+    const dm   = brain?.guides?.dungeon_master || "Sunday";
+    const line1 = `we call the NSFW wing **the Basement**. it’s run by **${dm}**, our Dungeon Master.`;
     const line2 = brain?.guides?.dungeon_access || "you need a nomination from a Dweller; then the Dungeon votes.";
     await message.reply(`${line1}\n${line2}\nSFW jail: **${sfw}** • NSFW jail: **${nsfw}**`);
     return;
