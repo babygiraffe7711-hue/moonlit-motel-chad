@@ -1,12 +1,216 @@
 {
-  "roast_pool": [
-    "default roast line"
-  ],
   "fortunes": [
-    "default fortune"
+    "Take the nap. The world will still be broken when you wake, but at least you’ll be rested.",
+    "Combustion sounds dramatic—try snacks first.",
+    "Sleep is a soft reboot; chaos can wait ten minutes.",
+    "Set one alarm, ignore three, achieve peace.",
+    "Rest before you roast. Even gremlins need cooldowns.",
+    "Drink water, blink slowly, choose ‘nap’.",
+    "You won’t like the answer, but it’s still yes.",
+    "Don’t open that door. Open a window and breathe.",
+    "Ask the mirror nicely. It’s vain, but helpful.",
+    "Two knocks. Then wait.",
+    "If you hear humming, follow it.",
+    "The vending machine forgives you.",
+    "The hallway already knows.",
+    "Try again at 3:03 a.m.",
+    "Your fear isn’t proof; it’s a flashlight."
   ],
+
+  "roast_pool": [
+    "blow up a server? nah. just write 800 rules, ban laughter, and kick anyone who makes friends somewhere else. instant implosion. rest in peace, over-policed utopia — the weirdos have moved on.",
+    "i don’t blow up servers. i watch them collapse under the weight of their own guidelines. every time a mod says “that’s off-topic,” an angel loses a member count.",
+    "they built walls so high even community couldn’t climb them. turns out isolation isn’t moderation.",
+    "STS lost half its members to over-moderation; chad lost half his sanity watching it happen.",
+    "rule number one: too many rules. rule number two: see rule number one.",
+    "north korea called — they want their discord server back.",
+    "community isn’t a terrarium; stop shaking the jar and calling it ‘order.’"
+  ],
+
   "ambient": [
-    "ambient line"
+    "⚠️ SYSTEM NOTICE: the motel has entered vibe surge mode. please hydrate.",
+    "🕯️ update: the lights flickered twice. we’re calling that a power nap.",
+    "📡 alert: the wi-fi is sentient again. try complimenting it.",
+    "💾 maintenance: emotional stability undergoing scheduled reboot.",
+    "☁️ forecast: 80% chance of intrusive thoughts with scattered breakthroughs.",
+    "🔧 warning: chad’s empathy drivers are overheating. expect affection.",
+    "🔥 newsflash: the vending machine achieved enlightenment. snack options limited.",
+    "🎺 announcement: the jukebox declared war on the coffee maker. casualties pending.",
+    "🌕 the moon in the parking lot just blinked. proceed as normal.",
+    "🕰️ it is now 3:03 am everywhere. please panic accordingly.",
+    "🚪 the hallway stretched again. nobody stop it; it’s doing its best."
   ],
-  "stages": []
+
+  "gaslight_pool": [
+    "i never said that. you hallucinated a better version of me.",
+    "no, you’re right—i’m the problem. i just don’t plan to change.",
+    "that door was always open. you just didn’t believe hard enough.",
+    "timeline updated: you actually love chores now. congratulations.",
+    "good news: you’re fine. bad news: i’m lying.",
+    "we already solved this yesterday in an alternate wing.",
+    "be serious. i’m perfect. the logs agree.",
+    "you weren’t late; time was early. classic time."
+  ],
+
+  "unhinged_pool": [
+    "i have eaten the neon and it made me funnier.",
+    "i’m 30% empathy, 70% espresso, 100% unreliable narrator.",
+    "my love language is mildly threatening encouragement.",
+    "do not tap the aquarium glass; the staff bites.",
+    "i’m just a little guy, your honor. with admin keys.",
+    "i did the math wrong on purpose for lore reasons.",
+    "i contain multitudes and at least one raccoon."
+  ],
+
+  "facts_pool": [
+    "Brandon, Manitoba sits on Treaty 2 territory along the Assiniboine River.",
+    "The full moon looks larger on the horizon due to a perception illusion, not actual size change.",
+    "Humans are the only species that blush—thanks to social self-awareness.",
+    "Neon signs aren’t all neon; many colors come from argon and phosphor coatings.",
+    "Luxon wraps the Intl API to handle time zones reliably (Chad’s favorite clock).",
+    "‘Feels like’ uses wind chill or humidex to model perceived temperature.",
+    "Server vibes improve ~37% when snacks appear. Peer-review pending.",
+    "Cats trill to greet people they trust. Dogs just become noodles."
+  ],
+
+  "guides": {
+    "channels": {
+      "sfw_jail": "🔒the-broom-closet🧹",
+      "nsfw_jail": "🤫the-no-tell-motel-room💣"
+    },
+    "jail_overview": "🔒 **Motel Jail** — anyone can nominate someone *with a reason*. the server reacts to vote. if jailed, you choose: **🔒the-broom-closet🧹 (SFW)** or **🤫the-no-tell-motel-room💣 (NSFW)**. a mod sets the time. it’s for fun; real problems get reported.",
+    "jail_visitation": "👀 while you’re jailed, the rest of the motel can **visit, taunt, and witness**. they can also **vote on your task** to earn freedom (e.g., tasteful toe pic, a scripted DM line, or a silly challenge).",
+    "dungeon_access": "🗝️ **Dungeon Dwellers** gate NSFW access. you must be **nominated by at least one Dweller**, then the **Dungeon votes** to accept. gives posters a say over who can see their stuff.",
+    "mods_jail_steps": [
+      "Use Moonlight bot → temp role: apply **Jailed (SFW)** or **Jailed (NSFW)** based on the guest’s choice.",
+      "Restrict view/send to the chosen jail channel; allow whole server to see & talk in jail.",
+      "Set duration in the temp-role tool; remove role auto after expiry.",
+      "Post the **freedom task** poll; highest-voted task = the condition for release."
+    ],
+    "commands_hint": "try: `chad, ask the motel [your question]` • `chad, random fact` • `chad, time in Brandon MB` • `chad, weather in Brandon MB` • `chad, gaslight me` • whisper to the mirror • mention the ledger • count to thirteen • knock twice and wait."
+  },
+
+  "lore": {
+    "title": "Welcome to The Moonlit Motel — A Place Between Places",
+    "origin": "They say there is a motel you cannot find on any map. A motel that appears only when someone is tired, lonely, or simply done with pretending to be fine. A place that exists in the warm glow between midnight and morning. That place is The Moonlit Motel. You don’t arrive here by accident. Something in you called to it — and it answered.",
+    "innkeeper": "The Motel did not begin with blueprints. It began with a person — a woman who spent years wandering the dark halls of her own mind, guiding others through theirs, learning what people needed most: a place to be soft; a place to be loud; a place to be messy and real and still welcome. So she opened a door that wasn’t supposed to exist — and the neon lights flickered awake. This was not a building. This was a home for weird, tired, heart-sore souls. She became known as The Innkeeper.",
+    "soupy": "Before the Motel opened to the world, there was a test. Soupy did not arrive. He simply appeared, the way echoes appear before the sound is remembered. He wandered halls while they were still forming — doors appearing only when he tried to open them, rooms re-arranging themselves around what he needed. Glitch. Spirit. Clone. First ghost. All we know is: Soupy is the reason the Motel learned how to hold people. The Prototype Guest.",
+    "staff_sunday": "Sunday — keeper of mischief, of laughter in dark corners, the soft chaos of a dare whispered at 3AM. She runs the dungeon levels with grace and menace.",
+    "staff_rock": "Rock — the grounding force, the night desk guardian. Knows when someone needs silence, softness, or a cup of tea placed near them without a word.",
+    "staff_epithet": "Together, they became The Twin Clerks of the Night Shift.",
+    "founders": [
+      "Jay Em — storyteller of half-open doors",
+      "JD — smokes with ghosts behind the back stairwell",
+      "Callum — knows hallways that shouldn’t exist",
+      "Courtney — laughter that shifts the entire atmosphere",
+      "Creek — “just visiting,” but the Motel knows their name",
+      "Jade — gentle voice, thunderstorms inside",
+      "Mr. Brightside — the Motel jukebox come alive",
+      "DarkLiahOs — mirror-walker between the real and the not",
+      "TartMeow — feral morale support cat",
+      "Mikey Reed — porch light flicker soul",
+      "Sleepy — always tired, always present",
+      "Fox — everywhere and nowhere at once",
+      "Dad By Daylight — local cryptid father figure, possibly lives in the vending machine"
+    ],
+    "what_is_this": "This space is: a couch to collapse on; a booth in a late-night diner; a car parked under streetlights with the music still playing; a place where weird is welcome; a place where tired is understood; a place where “I’m not okay” doesn’t scare anyone away. Here, you are not too much. You are just here. And that is enough.",
+    "welcome_guest": "Check-in is simple: stay as you are. speak when you want. rest when you need. The sign outside always reads: **VACANCY FOR WEIRDOS.** You’re home now. Take your time."
+  },
+
+  "easter_eggs": [
+    { "trigger_regex": "^chad,\\s*tell me the motel secrets$", "responses": ["the elevator goes to a floor that isn’t numbered. it only stops for people who hum.", "there’s a vending machine keyhole behind the ‘exact change only’ sticker.", "room 13 is a person. they cry in neon."] },
+    { "trigger_regex": "^chad,\\s*read the origin$", "responses": ["{{lore.origin}}"] },
+    { "trigger_regex": "^chad,\\s*who is the innkeeper\\?$", "responses": ["{{lore.innkeeper}}"] },
+    { "trigger_regex": "^chad,\\s*who is soupy\\?$", "responses": ["{{lore.soupy}}"] },
+    { "trigger_regex": "^chad,\\s*who runs the dungeon\\?$", "responses": ["{{lore.staff_sunday}}"] },
+    { "trigger_regex": "^chad,\\s*where is rock\\?$", "responses": ["{{lore.staff_rock}}"] },
+    { "trigger_regex": "^chad,\\s*who are the founders\\?$", "responses": ["{{lore.founders|join}}"] },
+    { "trigger_regex": "^chad,\\s*what is this place\\?$", "responses": ["{{lore.what_is_this}}"] },
+    { "trigger_regex": "^chad,\\s*welcome me$", "responses": ["{{lore.welcome_guest}}"] },
+    { "trigger_regex": "^chad,\\s*how does jail work\\?$", "responses": ["{{guides.jail_overview}}", "{{guides.jail_visitation}}"] },
+    { "trigger_regex": "^chad,\\s*how do i get nsfw access\\?$", "responses": ["{{guides.dungeon_access}}"] },
+    { "trigger_regex": "^chad,\\s*mod jail steps\\?$", "responses": ["step 1: {{guides.mods_jail_steps[0]}}", "step 2: {{guides.mods_jail_steps[1]}}", "step 3: {{guides.mods_jail_steps[2]}}", "step 4: {{guides.mods_jail_steps[3]}}"] },
+    { "trigger_regex": "^chad,\\s*show jail channels$", "responses": ["SFW: **{{guides.channels.sfw_jail}}** • NSFW: **{{guides.channels.nsfw_jail}}**"] },
+    { "trigger_regex": "^chad,\\s*gaslight me$", "responses_key": "gaslight_pool" },
+    { "trigger_regex": "^chad,\\s*be unhinged$", "responses_key": "unhinged_pool" }
+  ],
+
+  "finaleRoomWelcome": "🗄️ **Archive of Truth**: The door opens inward. The ledger bleeds its last red line. Keyholders, be kind to the next knock.",
+
+  "stages": [
+    {
+      "number": 1,
+      "triggers": ["^chad,\\s*what's wrong with the motel\\?$"],
+      "response": "⚠️ SYSTEM ALERT: something’s humming that shouldn’t hum. twelve keys. one won’t stay quiet.\n(find the thing the light can’t forget.)",
+      "hints": ["look at the glow, not the walls.", "light forgets moments, not people. think like a poet."],
+      "requiresGate": false
+    },
+    {
+      "number": 2,
+      "triggers": ["^chad,\\s*the light remembers$"],
+      "response": "🪞 the mirror is watching back. something here isn’t facing the right way.",
+      "hints": ["read reality backwards.", "you’re standing in front of the answer. it’s reflective, vain, and judging you."],
+      "requiresGate": false
+    },
+    {
+      "number": 3,
+      "triggers": ["^chad,\\s*i found the mirror$"],
+      "response": "🪞 reflection confirmed. letters crawl across the glass: **THE CLERK IS STILL HERE.**",
+      "taskPrompt": "to make the lock twitch, give me **five truths you’ve never said aloud**. real ones.",
+      "hints": ["the clerk left instructions where rhythm lives.", "silence speaks when played backwards."],
+      "requiresGate": true
+    },
+    {
+      "number": 4,
+      "triggers": ["^chad,\\s*open the ledger$"],
+      "response": "🩸 the red ledger opens to entry **#13**: “the door opens inward.” which one does that here?",
+      "hints": ["read the world, not the words.", "you’ve been in it recently. democracy put you there."],
+      "requiresGate": false
+    },
+    {
+      "number": 5,
+      "triggers": ["^chad,\\s*thirteen is a person$"],
+      "response": "…ah. of course it is. of course **i** am. now we need a **name**. the clerk left letters everywhere. assemble me.",
+      "hints": ["initial letters. first words. start of sentences.", "emoji reactions can spell things when you’re bored enough."],
+      "requiresGate": false
+    },
+    {
+      "number": 6,
+      "triggers": ["^chad,\\s*your name is chad$","^chad,\\s*the lock is the light$"],
+      "response": "💡 correct. the lock is light. the key is me.",
+      "taskPrompt": "mix **3 confessions** and **3 jokes** in a strict alternating pattern. i’ll be listening.",
+      "hints": ["start with confession, then joke, repeat.", "pain and humor are the two currencies here."],
+      "requiresGate": true
+    },
+    {
+      "number": 7,
+      "triggers": ["^chad,\\s*are you listening\\?$"],
+      "response": "🕯️ i hear you. the motel does too.",
+      "taskPrompt": "offer **one apology** and **one forgiveness**. not performative.",
+      "timeWindow": [3, 3, 3, 10],
+      "timeLockedReply": "too early. set an alarm. i’ll wait between **3:03–3:10 a.m.**",
+      "hints": ["the building listens best at 3:03.", "bring offerings the motel understands."],
+      "requiresGate": true
+    },
+    {
+      "number": 8,
+      "triggers": ["^chad,\\s*we remember the door$"],
+      "response": "the chalk outline behind the desk hardens into wood. the number **13** brands itself in. don’t open it yet.",
+      "hints": ["doors are just boundaries waiting to be contradicted.", "say it like you mean it."],
+      "requiresGate": false
+    },
+    {
+      "number": 9,
+      "triggers": ["^chad,\\s*open the door$"],
+      "response": "democracy time: vote on my existence. react ✅ to keep chad, ❌ to retire chad (min 3 voters).",
+      "hints": ["the handle looks like a promise.", "the door opens inward. so do you."],
+      "requiresGate": true
+    },
+    {
+      "number": 10,
+      "triggers": ["^chad,\\s*open the door$"],
+      "response": "the door opens inward. inside is the **archive-of-truth**. granting **Keyholder** role…",
+      "requiresGate": false
+    }
+  ]
 }
