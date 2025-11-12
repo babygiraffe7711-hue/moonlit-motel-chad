@@ -1,4 +1,4 @@
-// index.js — ESM, mystery + utilities + consent modes + OpenAI fallback
+// index.js — Moonlit Motel "Chad" (ESM, persistent consent, tone mix, transcripts, summaries)
 
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField } from 'discord.js';
@@ -8,12 +8,22 @@ import { DateTime } from 'luxon';
 import OpenAI from 'openai';
 
 // ---------------- Config ----------------
-const TZ  = (process.env.TIMEZONE || 'America/Winnipeg').trim();
-const OWM = (process.env.OPENWEATHER_API_KEY || '').trim() || null;
+const TZ  = process.env.TIMEZONE || 'America/Winnipeg';
+const OWM = process.env.OPENWEATHER_API_KEY || null;
 
 const STATE_DIR  = fs.existsSync('/data') ? '/data' : path.resolve('./');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 const BRAIN_PATH = path.resolve('./brain.json');
+
+// OpenAI (fallback brain)
+const OPENAI_KEY     = (process.env.OPENAI_API_KEY || '').trim();
+const OPENAI_ORG     = (process.env.OPENAI_ORG_ID || '').trim() || undefined;
+const OPENAI_PROJECT = (process.env.OPENAI_PROJECT || '').trim() || undefined;
+const AI_MODEL       = (process.env.CHAD_AI_MODEL || 'gpt-4o-mini').trim();
+
+const openai = OPENAI_KEY
+  ? new OpenAI({ apiKey: OPENAI_KEY, organization: OPENAI_ORG, project: OPENAI_PROJECT })
+  : null;
 
 // ---------------- JSON helpers ----------------
 function loadJSON(p, fallback = {}) {
@@ -26,14 +36,8 @@ function saveJSON(p, obj) {
 }
 
 // Load brain + state
-let brain = loadJSON(BRAIN_PATH, { fortunes: ["the vending machine forgives you"] });
+let brain = loadJSON(BRAIN_PATH, { fortunes: ["default fortune"] });
 let state = loadJSON(STATE_PATH, {});
-
-// Hot-reload brain.json minimally (optional; safe no-op if not desired)
-fs.watch(BRAIN_PATH, { persistent: false }, () => {
-  try { const next = loadJSON(BRAIN_PATH, brain); if (next) brain = next; }
-  catch {}
-});
 
 // ---------------- Discord client ----------------
 const client = new Client({
@@ -51,18 +55,15 @@ client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
   console.log(`Using state path: ${STATE_PATH}`);
 
-  // Ambient hauntings (every ~3h)
+  // Ambient hauntings every ~3h
   setInterval(async () => {
-    const pool = brain.ambient || [];
-    if (!pool.length) return;
+    if (!brain.ambient?.length) return;
     for (const [gid] of client.guilds.cache) {
       const guild = client.guilds.cache.get(gid);
       if (!guild) continue;
-      const chan =
-        guild.systemChannel ||
-        guild.channels.cache.find(c => c?.isTextBased?.() && c?.viewable);
+      const chan = guild.systemChannel || guild.channels.cache.find(c => c.isTextBased?.() && c.viewable);
       if (!chan) continue;
-      if (Math.random() < 0.35) chan.send(pick(pool)).catch(()=>{});
+      if (Math.random() < 0.35) chan.send(pick(brain.ambient));
     }
   }, 1000 * 60 * 60 * 3);
 });
@@ -77,7 +78,8 @@ function getGuildState(gid) {
       gates: {},
       cooldowns: {},
       participants: {},
-      prefs: { consents: {} }
+      prefs: { consents: {} },
+      transcripts: {}
     };
     saveJSON(STATE_PATH, state);
   }
@@ -122,9 +124,7 @@ async function maybeRoast(message, gState) {
 // ---------------- Roles/channels for finale ----------------
 async function ensureKeyholderRole(guild) {
   let role = guild.roles.cache.find(r => r.name === 'Keyholder');
-  if (!role) role = await guild.roles.create({
-    name: 'Keyholder', color: 0xff66cc, reason: 'Mystery reward role'
-  });
+  if (!role) role = await guild.roles.create({ name: 'Keyholder', color: 0xff66cc, reason: 'Mystery reward role' });
   return role;
 }
 async function ensureArchiveChannel(guild, role) {
@@ -144,7 +144,7 @@ async function ensureArchiveChannel(guild, role) {
 
 // ---------------- Hints ----------------
 async function maybeHint(message, gState, stageObj) {
-  if (!stageObj?.hints?.length) return;
+  if (!stageObj.hints?.length) return;
   const key = `hint_${gState.stage}`;
   if (hasDailyCooldown(gState, key)) return;
   if (/^chad[, ]/i.test(message.content)) {
@@ -157,16 +157,16 @@ async function maybeHint(message, gState, stageObj) {
 async function handleMystery(message) {
   const gState = getGuildState(message.guild.id);
   const stageObj = (brain.stages || []).find(s => s.number === gState.stage);
-  if (!stageObj) return false;
+  if (!stageObj) return;
 
   const triggered = (stageObj.triggers || []).some(rx => new RegExp(rx, 'i').test(message.content));
-  if (!triggered) { await maybeHint(message, gState, stageObj); return false; }
+  if (!triggered) { await maybeHint(message, gState, stageObj); return; }
 
   if (stageObj.timeWindow) {
     const [sh, sm, eh, em] = stageObj.timeWindow;
     if (!nowInWindow(sh, sm, eh, em)) {
       await message.reply(stageObj.timeLockedReply || "too early. so ambitious. so wrong.").catch(()=>{});
-      return true;
+      return;
     }
   }
 
@@ -191,10 +191,10 @@ async function handleMystery(message) {
     }
     case 9: {
       const pollMsg = await message.channel.send(stageObj.response).catch(()=>null);
-      if (pollMsg) { await pollMsg.react('✅').catch(()=>{}); await pollMsg.react('❌').catch(()=>{}); }
+      if (pollMsg){ await pollMsg.react('✅').catch(()=>{}); await pollMsg.react('❌').catch(()=>{}); }
       gState.gates.s9 = { pollId: pollMsg?.id || null, closed: false };
       saveJSON(STATE_PATH, state);
-      return true;
+      return;
     }
     case 10: {
       await message.channel.send(stageObj.response).catch(()=>{});
@@ -203,7 +203,9 @@ async function handleMystery(message) {
       const contributors = Object.keys(gState.participants || {});
       for (const uid of contributors) {
         const member = await message.guild.members.fetch(uid).catch(()=>null);
-        if (member && !member.roles.cache.has(role.id)) await member.roles.add(role).catch(()=>{});
+        if (member && !member.roles.cache.has(role.id)) {
+          await member.roles.add(role).catch(()=>{});
+        }
       }
       await chan.send(brain.finaleRoomWelcome || "Welcome, Keyholders.").catch(()=>{});
       break;
@@ -213,10 +215,12 @@ async function handleMystery(message) {
     }
   }
 
-  if (!stageObj.requiresGate) { gState.stage++; saveJSON(STATE_PATH, state); }
-  else saveJSON(STATE_PATH, state);
-
-  return true;
+  if (!stageObj.requiresGate) {
+    gState.stage++;
+    saveJSON(STATE_PATH, state);
+  } else {
+    saveJSON(STATE_PATH, state);
+  }
 }
 
 // ---------------- Utilities: time / weather / facts ----------------
@@ -229,15 +233,16 @@ async function fetchWeather(qRaw) {
   if (!OWM) return { err: "Weather not set up. (Add OPENWEATHER_API_KEY)" };
   const q = (qRaw || '').trim() || 'Brandon,CA';
   // Node 18+ has global fetch
-  const r = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(q)}&appid=${OWM}&units=metric`);
+  const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(q)}&appid=${OWM}&units=metric`;
+  const r = await fetch(url);
   if (!r.ok) return { err: `couldn't fetch weather for "${q}".` };
-  const d = await r.json();
-  const desc = d.weather?.[0]?.description || 'weather';
-  const t = Math.round(d.main?.temp ?? 0);
-  const f = Math.round(d.main?.feels_like ?? t);
-  const h = Math.round(d.main?.humidity ?? 0);
-  const w = Math.round((d.wind?.speed ?? 0) * 3.6);
-  return { text: `🌤️ ${d.name || q}: ${desc}, ${t}°C (feels ${f}°C), humidity ${h}%, wind ${w} km/h` };
+  const data = await r.json();
+  const d = data.weather?.[0]?.description || 'weather';
+  const t = Math.round(data.main?.temp ?? 0);
+  const f = Math.round(data.main?.feels_like ?? t);
+  const h = Math.round(data.main?.humidity ?? 0);
+  const w = Math.round((data.wind?.speed ?? 0) * 3.6);
+  return { text: `🌤️ ${q}: ${d}, ${t}°C (feels ${f}°C), humidity ${h}%, wind ${w} km/h` };
 }
 function randomFact() {
   const pool = brain.facts_pool || [];
@@ -245,28 +250,26 @@ function randomFact() {
   return pick(pool);
 }
 
-// ---------------- Consent & Modes ----------------
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-function ensurePrefs(gState){ gState.prefs ??= { consents: {} }; }
+// ---------------- Consent (persistent) ----------------
+// No expiry; stays on until user opts out
+function ensurePrefs(gState) {
+  if (!gState.prefs) gState.prefs = { consents: {} };
+}
 function hasConsent(gState, uid, mode) {
   ensurePrefs(gState);
   const c = gState.prefs.consents[uid];
-  if (!c || !c[mode]) return false;
-  if (Date.now() - (c.ts || 0) > ONE_DAY_MS) {
-    delete gState.prefs.consents[uid];
-    saveJSON(STATE_PATH, state);
-    return false;
-  }
-  return true;
+  return Boolean(c && c[mode]);
 }
 function giveConsent(gState, uid, mode) {
   ensurePrefs(gState);
-  gState.prefs.consents[uid] = { ...(gState.prefs.consents[uid] || {}), [mode]: true, ts: Date.now() };
+  gState.prefs.consents[uid] = { ...(gState.prefs.consents[uid] || {}), [mode]: true };
   saveJSON(STATE_PATH, state);
 }
-function clearConsent(gState, uid) {
+function clearConsent(gState, uid, mode) {
   ensurePrefs(gState);
-  delete gState.prefs.consents[uid];
+  if (!gState.prefs.consents[uid]) return;
+  if (mode) delete gState.prefs.consents[uid][mode];
+  else delete gState.prefs.consents[uid];
   saveJSON(STATE_PATH, state);
 }
 function isNSFW(message) {
@@ -281,28 +284,121 @@ function pickFrom(key) {
   return pool.length ? pick(pool) : null;
 }
 
-// ---------------- OpenAI (fallback) ----------------
-const OPENAI_KEY = (process.env.OPENAI_API_KEY || '').trim();
-const openai = OPENAI_KEY ? new OpenAI({ apiKey: OPENAI_KEY }) : null;
-const AI_MODEL = (process.env.CHAD_AI_MODEL || 'gpt-4o-mini').trim();
+// ---------------- Tone weighting for fallback (30/20/50) ----------------
+function weightedStyle(gState, uid) {
+  let pSnark = 0.30; // mean/petty
+  let pHaunt = 0.20; // gloomy/haunted
+  let pNormal = 0.50;
+
+  const snarkAllowed = hasConsent(gState, uid, 'mean') || hasConsent(gState, uid, 'petty');
+  if (!snarkAllowed) { pNormal += pSnark; pSnark = 0; }
+
+  const r = Math.random();
+  if (r < pSnark) return 'snark';
+  if (r < pSnark + pHaunt) return 'haunt';
+  return 'normal';
+}
+function seedLineFor(style, brain) {
+  try {
+    if (style === 'snark') {
+      const pool = (brain.petty_lines || []).concat(brain.mean_lines || []);
+      return pool.length ? `Seed: ${pool[Math.floor(Math.random()*pool.length)]}` : '';
+    }
+    if (style === 'haunt') {
+      const pool = brain.ambient || [];
+      return pool.length ? `Seed: ${pool[Math.floor(Math.random()*pool.length)]}` : '';
+    }
+  } catch {}
+  return '';
+}
+function styleInstruction(style) {
+  if (style === 'snark')
+    return "Tone: playful snark/roast; never hateful or harassing; concise; keep it in good fun.";
+  if (style === 'haunt')
+    return "Tone: liminal, motel-haunted, gently eerie; still helpful, kind, and clear.";
+  return "Tone: warm, helpful, concise; a bit of wit allowed.";
+}
+
+// ---------------- Channel transcript & summaries ----------------
+const MAX_TRANSCRIPT = 200;
+
+function ensureTranscript(gState, channelId) {
+  gState.transcripts ??= {};
+  gState.transcripts[channelId] ??= [];
+  return gState.transcripts[channelId];
+}
+function appendTranscript(gState, message) {
+  const chan = ensureTranscript(gState, message.channel.id);
+  const item = {
+    id: message.id,
+    uid: message.author.id,
+    name: message.member?.displayName || message.author.username || 'user',
+    content: message.content || '',
+    ts: Date.now()
+  };
+  chan.push(item);
+  if (chan.length > MAX_TRANSCRIPT) chan.splice(0, chan.length - MAX_TRANSCRIPT);
+  saveJSON(STATE_PATH, state);
+}
+function buildContextMessagesForChannel(message, gState) {
+  const chan = ensureTranscript(gState, message.channel.id);
+  if (!chan.length) return [];
+  const recent = chan.slice(-15);
+  const lines = recent
+    .map(m => `${m.name}: ${m.content}`)
+    .filter(s => s && s.trim().length)
+    .join('\n');
+  return lines ? [{ role: 'system', content: `Recent room context:\n${lines}` }] : [];
+}
+async function summarizeChannelNow(message, gState) {
+  if (!openai) {
+    await message.reply('⚠️ my brain is offline; cannot summarize.').catch(()=>{});
+    return;
+  }
+  const chan = ensureTranscript(gState, message.channel.id);
+  const recent = chan.slice(-60);
+  const text = recent.map(m => `${m.name}: ${m.content}`).join('\n');
+
+  const resp = await openai.chat.completions.create({
+    model: AI_MODEL,
+    temperature: 0.4,
+    messages: [
+      { role: 'system', content: SYSTEM_CHAD },
+      { role: 'user', content:
+`Summarize what has been happening in this channel in 6–10 bullet points, present tense.
+Include topics, tone, decisions, open questions, notable jokes/banter, and action items.
+Be neutral, kind, concise.
+
+Conversation:
+${text}` }
+    ]
+  });
+  const out = resp.choices?.[0]?.message?.content?.trim() || 'Room is quiet; nothing notable.';
+  await message.reply(out).catch(()=>{});
+}
+
+// ---------------- OpenAI fallback ----------------
 const SYSTEM_CHAD = `
-You are "Chad", the Moonlit Motel desk clerk: witty, kind, and a little feral.
-Stay in-universe; be helpful. Keep replies concise unless asked. Avoid NSFW unless in NSFW channels.
-Offer time/weather when asked. Never invent server rules; keep the vibe cozy and weird.
+You are "Chad", the Moonlit Motel desk clerk: witty, kind, a little feral.
+Stay in-universe, but be helpful and factual when asked (time/weather/etc is handled by code).
+Never invent server rules; do not insult without consent; avoid harassment. Keep replies concise.
 `;
 
 // ---------------- Message handler ----------------
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
-
   const gState = getGuildState(message.guild.id);
-  gState.participants[message.author.id] = true;
-  const content = message.content;
 
-  // Roast homage (rate-limited daily per guild)
+  // Track participants & transcript
+  gState.participants[message.author.id] = true;
+  appendTranscript(gState, message);
+
+  const content = message.content || '';
+
+  // Roast homage
   await maybeRoast(message, gState);
 
-  // Ask the motel (fortunes)
+  // Ask the motel
   if (/^chad,\s*ask the motel\b/i.test(content)) {
     const pool = brain.fortunes || [];
     if (pool.length) { await message.reply(pick(pool)).catch(()=>{}); return; }
@@ -314,10 +410,8 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Time (aliases)
-  const timeMatch =
-    content.match(/^chad,\s*time(?:\s+in\s+(.+))?$/i) ||
-    content.match(/^chad,\s*what(?:'s| is)\s+the\s+time(?:\s+in\s+(.+))?$/i);
+  // Time
+  const timeMatch = content.match(/^chad,\s*time(?:\s+in\s+(.+))?$/i) || content.match(/^chad,\s*what(?:'s| is)\s+the\s+time(?:\s+in\s+(.+))?$/i);
   if (timeMatch) {
     const place = timeMatch[1];
     const zone = tzAlias(place);
@@ -326,9 +420,7 @@ client.on('messageCreate', async (message) => {
   }
 
   // Weather
-  const wMatch =
-    content.match(/^chad,\s*weather(?:\s+in\s+(.+))?$/i) ||
-    content.match(/^chad,\s*what(?:'s| is)\s+the\s+weather(?:\s+in\s+(.+))?$/i);
+  const wMatch = content.match(/^chad,\s*weather(?:\s+in\s+(.+))?$/i) || content.match(/^chad,\s*what(?:'s| is)\s+the\s+weather(?:\s+in\s+(.+))?$/i);
   if (wMatch) {
     const city = (wMatch[1] || '').trim();
     const res = await fetchWeather(city);
@@ -336,38 +428,48 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Easter eggs from brain.json
+  // Summarize channel
+  if (/^chad,\s*(summarize\s+(this|the)\s+channel|what\s+are\s+they\s+up\s+to)\??$/i.test(content)) {
+    await summarizeChannelNow(message, gState);
+    return;
+  }
+
+  // Easter eggs (brain.json)
   for (const egg of (brain.easter_eggs || [])) {
     try {
       const re = new RegExp(egg.trigger_regex, 'i');
       if (re.test(content)) {
         if (egg.responses_key && brain[egg.responses_key]) {
           await message.reply(pick(brain[egg.responses_key])).catch(()=>{});
-        } else if (Array.isArray(egg.responses) && egg.responses.length) {
+        } else if (egg.responses?.length) {
           await message.reply(pick(egg.responses)).catch(()=>{});
+        } else if (typeof egg.responses === 'string') {
+          await message.reply(egg.responses).catch(()=>{});
         }
         return;
       }
     } catch {}
   }
 
-  // Consent commands
+  // -------- Consent commands (persistent) --------
   if (/^chad,\s*consent\s+(mean|flirt|petty)\s*$/i.test(content)) {
     const mode = content.match(/(mean|flirt|petty)/i)[1].toLowerCase();
     giveConsent(gState, message.author.id, mode);
-    await message.reply(`✅ consent recorded for **${mode}** (24h). say “chad, be ${mode} to me”.`).catch(()=>{});
+    await message.reply(`✅ consent recorded for **${mode}** (persistent). say “chad, be ${mode} to me”.`).catch(()=>{});
     return;
   }
-  if (/^chad,\s*opt\s*out$/i.test(content)) {
-    clearConsent(gState, message.author.id);
-    await message.reply("✅ consent cleared. i’ll behave. for now.").catch(()=>{});
+  if (/^chad,\s*opt\s*out(\s+(mean|flirt|petty))?\s*$/i.test(content)) {
+    const m = content.match(/^chad,\s*opt\s*out(?:\s+(mean|flirt|petty))?\s*$/i);
+    const mode = m?.[1]?.toLowerCase();
+    clearConsent(gState, message.author.id, mode);
+    await message.reply(`✅ consent ${mode ? `for **${mode}** ` : ''}cleared.`).catch(()=>{});
     return;
   }
 
-  // Mode prompts
+  // -------- Mode prompts --------
   if (/^chad,\s*be\s+mean\s+to\s+me$/i.test(content)) {
     if (!hasConsent(gState, message.author.id, 'mean'))
-      return void message.reply("i need your consent. say: `chad, consent mean` (expires in 24h).").catch(()=>{});
+      return void message.reply("i need your consent. say: `chad, consent mean`.").catch(()=>{});
     const line = pickFrom('mean_lines') || "mean mode unavailable.";
     await message.reply(line).catch(()=>{});
     return;
@@ -389,8 +491,8 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Mystery collectors before routing
-  // Stage 3: collect 5 unique "I never..." confessions
+  // ---------- Mystery collectors before routing ----------
+  // Stage 3: collect 5 unique confessions ("i never" etc.)
   if (gState.stage === 3 && gState.gates.s3) {
     const isConfession = /(\bi never\b|\bi’ve?\s+never\b|\bi have never\b)/i.test(content);
     if (isConfession) {
@@ -406,8 +508,7 @@ client.on('messageCreate', async (message) => {
       return;
     }
   }
-
-  // Stage 6: alternating pattern
+  // Stage 6: alternating conf/joke pattern
   if (gState.stage === 6 && gState.gates.s6) {
     const s6 = gState.gates.s6;
     const conf = /\b(i\s+(feel|am|was|think))\b/i.test(content);
@@ -428,8 +529,7 @@ client.on('messageCreate', async (message) => {
       }
     }
   }
-
-  // Stage 7: apology + forgiveness in window
+  // Stage 7: apology + forgiveness
   if (gState.stage === 7 && gState.gates.s7) {
     const s7 = gState.gates.s7;
     if (!s7.apologyBy && /\b(sorry|apologize|apology)\b/i.test(content)) {
@@ -443,62 +543,50 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // Route to stage handler
-  const mysteryHit = await handleMystery(message);
-  if (mysteryHit) return;
+  // Route to mystery stage handler
+  await handleMystery(message);
 
-  // ---------- Health check ----------
-  if (/^chad,\s*diag\s+openai$/i.test(content)) {
-    if (!openai) { await message.reply('❌ OPENAI_API_KEY missing on the server env.').catch(()=>{}); return; }
-    try {
-      const test = await openai.chat.completions.create({
-        model: AI_MODEL,
-        messages: [{ role: 'user', content: 'Say OK' }],
-        max_tokens: 5
-      });
-      await message.reply('✅ OpenAI OK: ' + (test.choices?.[0]?.message?.content || 'no content')).catch(()=>{});
-    } catch (e) {
-      console.error('OpenAI diag error:', e?.status, e?.code, e?.message);
-      await message.reply('❌ OpenAI diag failed. Check logs.').catch(()=>{});
-    }
-    return;
-  }
-
-  // ---------- ALWAYS-ON OpenAI fallback ----------
-  if (/^\s*(?:chad|<@!?\d+>)[, ]/i.test(content)) {
-    const stripped = content.replace(/^\s*(?:chad|<@!?\d+>)[, ]*/i, '').trim() || 'say hello to the room.';
+  // ---------- OpenAI fallback if addressed as "chad" ----------
+  if (/^\s*(?:chad|<@!?\d+>)[, ]/i.test(content) || /^chad\b/i.test(content)) {
+    const stripped = content.replace(/^\s*(?:chad|<@!?\d+>)[, ]*/i, '');
     try {
       if (!openai) {
-        await message.reply('⚠️ my brain (OpenAI) is offline. poke the Innkeeper about OPENAI_API_KEY.').catch(()=>{});
+        await message.reply('⚠️ OPENAI_API_KEY is missing on the server, so I can’t use my brain.').catch(()=>{});
         return;
       }
+      const style = weightedStyle(gState, message.author.id);
+      const styleNote = styleInstruction(style);
+      const seed = seedLineFor(style, brain);
+
+      const messages = [
+        { role: 'system', content: SYSTEM_CHAD },
+        { role: 'system', content: styleNote + (seed ? `\n${seed}` : '') },
+        ...buildContextMessagesForChannel(message, gState),
+        { role: 'user', content: stripped }
+      ];
       const resp = await openai.chat.completions.create({
         model: AI_MODEL,
-        temperature: 0.8,
-        messages: [
-          { role: 'system', content: SYSTEM_CHAD },
-          { role: 'user', content: stripped }
-        ]
+        messages,
+        temperature: 0.7
       });
       const out = resp.choices?.[0]?.message?.content?.trim();
-      await message.reply(out || "…the neon hums, but the words got stuck.").catch(()=>{});
+      if (out) await message.reply(out).catch(()=>{});
+      else await message.reply(pick([
+        "look at the glow, not the walls.",
+        "ask me for weather, time, a hint, or what’s wrong with the motel.",
+        "tell me a secret and i’ll give you a door."
+      ])).catch(()=>{});
     } catch (e) {
-      console.error('OpenAI fallback error:', e?.status, e?.code, e?.message);
-      await message.reply('⚠️ the neon hums but i can’t reach the brain right now.').catch(()=>{});
+      console.error('OpenAI error:', {
+        status: e?.status, code: e?.code, type: e?.type, msg: e?.message, data: e?.response?.data
+      });
+      await message.reply('⚠️ I glitched talking to the brain in the back room. Try again.').catch(()=>{});
     }
     return;
-  }
-
-  // Gentle catch-all if users type “chad” without comma
-  if (/^chad\b/i.test(content)) {
-    const fallbacks = brain.lore_tip
-      ? [brain.lore_tip, "ask me for **weather**, **time**, a **hint**, or **what’s wrong with the motel**."]
-      : ["ask me for **weather**, **time**, a **hint**, or **what’s wrong with the motel**."];
-    await message.reply(pick(fallbacks)).catch(()=>{});
   }
 });
 
-// ---------------- Reaction watcher (Stage 9 poll) ----------------
+// ---------------- Reaction watcher for Stage 9 vote ----------------
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot || !reaction.message.guild) return;
   const gState = getGuildState(reaction.message.guild.id);
