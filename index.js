@@ -5,13 +5,12 @@
 // - Roles overview
 // - Teach/forget custom replies
 // - Ambient chatter + roast homage
-// - AI fallback w/ tool calls (no need to hard-code every simple Q)
+// - AI fallback w/ tool calls
 // ---------------------------------------------------------------
 
 import 'dotenv/config';
 
-// (Optional) Hard gate so only the chosen service runs the bot.
-// If you set RUN_CHAD=1 on your intended worker, any other environment won't start Chad.
+// (Optional) only start if RUN_CHAD=1 is set in env
 if (process.env.RUN_CHAD && (process.env.RUN_CHAD || '').trim() !== '1') {
   console.log('RUN_CHAD present but not "1" — exiting to avoid unintended instance.');
   process.exit(0);
@@ -27,12 +26,12 @@ import OpenAI from 'openai';
 const TZ  = process.env.TIMEZONE || 'America/Winnipeg';
 const OWM = (process.env.OPENWEATHER_API_KEY || '').trim() || null;
 
-// Where state files live (Render disk if present)
+// persistent storage folder
 const STATE_DIR  = fs.existsSync('/data') ? '/data' : path.resolve('./');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 const DYN_INTENTS_PATH = path.join(STATE_DIR, 'brain_dynamic.json');
 
-// ---------- SINGLETON LOCK (per-container; prevents duplicate replies inside one container) ----------
+// ---------- SINGLETON LOCK (per-container) ----------
 const LOCK_PATH = path.join(STATE_DIR, 'chad.lock');
 const MAX_LOCK_AGE_MS = (process.env.CHAD_LOCK_MAX_AGE_MINUTES ? Number(process.env.CHAD_LOCK_MAX_AGE_MINUTES) : 10) * 60 * 1000;
 if ((process.env.CHAD_LOCK_BUST || '').trim() === '1') { try { fs.rmSync(LOCK_PATH, { force: true }); } catch {} }
@@ -80,7 +79,6 @@ client.once('ready', () => {
   console.log('DISCORD_TOKEN present:', !!(process.env.DISCORD_TOKEN||'').trim());
   console.log('OPENWEATHER_API_KEY present:', !!(process.env.OPENWEATHER_API_KEY||'').trim());
   console.log(`OpenAI: ${!!OPENAI_KEY} | Model: ${AI_MODEL} | Org: ${OPENAI_ORG || '(none)'} | Project: ${OPENAI_PROJECT || '(none)'}`);
-  if (!OPENAI_KEY) console.warn('⚠️ OPENAI_API_KEY missing or blank. Chad will NOT use OpenAI.');
 
   // Ambient: drop a random line every ~3 hours, per guild 35% chance
   setInterval(async () => {
@@ -111,7 +109,7 @@ function normalizeWake(content, client) {
   if (c.startsWith(`<@${id}>`) || c.startsWith(`<@!${id}>`)) {
     const rest = c.split('>', 1)[1]?.trim() || '';
     return `chad, ${rest}`;
-    }
+  }
   return c;
 }
 
@@ -345,7 +343,7 @@ function buildSoupyLore() {
   return `**Who is Soupy?**\n${pick(lines)}`;
 }
 
-// ---------- AI FALLBACK ----------
+// ---------- AI (OpenAI) ----------
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || '').trim();
 const OPENAI_ORG = (process.env.OPENAI_ORG_ID || '').trim() || undefined;
 const OPENAI_PROJECT = (process.env.OPENAI_PROJECT || '').trim() || undefined;
@@ -365,12 +363,56 @@ Never invent server rules; call tools I give you.
 If a question is clearly "mystery progression", say: "try the mirror, the light, or the ledger."
 `;
 
+// ✅ Correct tools schema
 const toolDefs = [
-  { type:"function", name:"tool_time", description:"Return local time for a place", parameters:{ type:"object", properties:{ place:{type:"string"} }, required:["place"] } },
-  { type:"function", name:"tool_weather", description:"Return current weather for a place", parameters:{ type:"object", properties:{ place:{type:"string"} }, required:["place"] } },
-  { type:"function", name:"tool_basement", description:"Explain Basement/NSFW and who runs it", parameters:{ type:"object", properties:{}, required:[] } },
-  { type:"function", name:"tool_justice", description:"Explain Motel justice/court system", parameters:{ type:"object", properties:{}, required:[] } },
-  { type:"function", name:"tool_roles", description:"Explain server roles", parameters:{ type:"object", properties:{}, required:[] } }
+  {
+    type: "function",
+    function: {
+      name: "tool_time",
+      description: "Return local time for a place",
+      parameters: {
+        type: "object",
+        properties: { place: { type: "string" } },
+        required: ["place"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "tool_weather",
+      description: "Return current weather for a place",
+      parameters: {
+        type: "object",
+        properties: { place: { type: "string" } },
+        required: ["place"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "tool_basement",
+      description: "Explain Basement/NSFW and who runs it",
+      parameters: { type: "object", properties: {}, required: [] }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "tool_justice",
+      description: "Explain Motel justice/court system",
+      parameters: { type: "object", properties: {}, required: [] }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "tool_roles",
+      description: "Explain server roles",
+      parameters: { type: "object", properties: {}, required: [] }
+    }
+  }
 ];
 
 async function tool_time(args){ return formatTime(tzAlias(args.place)); }
@@ -391,7 +433,7 @@ async function aiAnswer(userText){
 
   const messages = [{ role:"system", content:SYSTEM_CHAD }, { role:"user", content:userText }];
 
-  // one simple retry wrapper
+  // simple retry helper
   async function callOnce() {
     const resp = await openai.chat.completions.create({
       model: AI_MODEL,
@@ -407,11 +449,11 @@ async function aiAnswer(userText){
   try {
     msg = await callOnce();
   } catch (e) {
-    // brief backoff + retry
     await new Promise(r=>setTimeout(r, 600));
     msg = await callOnce();
   }
 
+  // Tool call flow (✅ include tool_call_id)
   if (msg.tool_calls?.length) {
     const call = msg.tool_calls[0];
     const name = call.function.name;
@@ -423,21 +465,21 @@ async function aiAnswer(userText){
       if (name === "tool_basement") toolResult = await tool_basement();
       if (name === "tool_justice")  toolResult = await tool_justice();
       if (name === "tool_roles")    toolResult = await tool_roles();
-    } catch {
-      toolResult = "⚠️ tool failed.";
-    }
+    } catch { toolResult = "⚠️ tool failed."; }
+
     const follow = await openai.chat.completions.create({
       model: AI_MODEL,
       messages: [
         { role:"system", content:SYSTEM_CHAD },
         { role:"user", content:userText },
         msg,
-        { role:"tool", name, content: toolResult }
+        { role:"tool", tool_call_id: call.id, content: toolResult }
       ],
       temperature: 0.7
     });
     return follow.choices[0].message.content?.trim() || toolResult;
   }
+
   return msg.content?.trim() || null;
 }
 
@@ -539,7 +581,7 @@ const CHAD_FALLBACKS = [
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
-  // --- event visibility diag
+  // event visibility diag
   console.log('[evt] messageCreate', {
     guild: !!message.guild,
     authorBot: message.author?.bot,
@@ -553,7 +595,7 @@ client.on('messageCreate', async (message) => {
 
   const content = normalizeWake(message.content || '', client);
 
-  // Quick health check: "chad, diag openai"
+  // Quick health check
   if (/^chad[, ]\s*diag\s+openai$/i.test(content)) {
     try {
       if (!openai) {
@@ -590,7 +632,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // TIME (tolerant)
+  // TIME
   const timeRegexes = [
     /^chad[, ]\s*time(?:\s+in\s+(.+))?[.?!]*$/i,
     /^chad[, ]\s*what(?:'s| is)?\s+(?:the\s+)?time(?:\s+in\s+(.+))?[.?!]*$/i,
@@ -613,7 +655,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // BASEMENT / DUNGEON (who/explain/where/etc.)
+  // BASEMENT / DUNGEON
   if (/^chad[, ]\s*(what\s+is|where\s+is|tell\s+me\s+about|explain|describe|how\s+does|how\s+do|what\s+does.*mean)\s+(the\s+)?(basement|dungeon)\b.*$/i.test(content)
    || /^chad[, ]\s*(who\s+runs|who\s+is|who's|who\s+is\s+in\s+charge|who\s+leads|who\s+owns|who\s+controls|who\s+manages|who\s+the\s+dungeon\s+master\s+is)\s+(the\s+)?(basement|dungeon|dungeon\s+master)\??[.?!]*$/i.test(content)) {
     const sfw  = brain?.guides?.channels?.sfw_jail  || "🔒the-broom-closet🧹";
@@ -672,11 +714,11 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // ROUTE INTENTS (roles list, date-me sarcasm, motel status, etc.)
+  // ROUTE INTENTS
   const intentHit = await routeIntent(message, content, gState);
   if (intentHit) return;
 
-  // EASTER EGGS from brain.json
+  // EASTER EGGS
   for (const egg of (brain.easter_eggs || [])) {
     try {
       const re = new RegExp(egg.trigger_regex, 'i');
@@ -714,11 +756,11 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Run mystery before AI/catch-alls so triggers fire properly
+  // Run mystery first
   const mysteryHit = await handleMystery(message, content);
   if (mysteryHit) return;
 
-  // AI FALLBACK for anything addressed to Chad that wasn't caught
+  // AI FALLBACK
   if (/^\s*(?:chad|<@!?\d+>)/i.test(content)) {
     const stripped = content.replace(/^\s*(?:chad|<@!?\d+>)[, ]*/i, '');
     try {
@@ -729,14 +771,11 @@ client.on('messageCreate', async (message) => {
       const ai = await aiAnswer(stripped);
       if (ai && ai.trim()) {
         await message.reply(ai).catch(()=>{});
-        return;
       } else {
         console.error('AI returned empty/null. Input was:', stripped);
         await message.reply('⚠️ I glitched trying to talk to OpenAI. Check server logs.').catch(()=>{});
-        return;
       }
     } catch (e) {
-      // ultra-verbose OpenAI error logging
       const safe = {
         name: e?.name,
         status: e?.status,
@@ -747,11 +786,11 @@ client.on('messageCreate', async (message) => {
       };
       console.error('OpenAI error detail:', safe);
       await message.reply(`⚠️ OpenAI call failed (${safe.status || 'no-status'}).`).catch(()=>{});
-      return;
     }
+    return;
   }
 
-  // Catch-alls so Chad answers when addressed
+  // Catch-alls
   if (/,chad\b/i.test(message.content) || /^chad\b/i.test(content)) {
     await message.reply(pick(CHAD_FALLBACKS)).catch(()=>{});
   }
