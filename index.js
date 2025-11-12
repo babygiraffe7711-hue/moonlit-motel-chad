@@ -1,15 +1,5 @@
-// Chad — Moonlit Motel bot (FULL BUILD w/ fuzzy LEARN + rotating replies)
+// Chad — Moonlit Motel bot (FULL BUILD w/ fuzzy LEARN + rotating replies + time/world map + basement fixes)
 // Node.js + discord.js + Luxon
-// - Singleton lock (prevents double posts; auto-cleans stale locks)
-// - Normalize @mention → "chad, ..." so regex in brain.json matches
-// - Weather/Time helpers (US/CA normalization)
-// - Justice/Basement explainers (Sunday)
-// - Lore Q&A + "what’s wrong with the motel?"
-// - Easter eggs with {{template}} support (paths, [idx], |join)
-// - Mystery engine using brain.stages (with gates 3/6/7/9/10)
-// - Intent engine (loose matching) + live teaching: learn/forget/list
-// - Fuzzy learn patterns + rotating replies separated by "|"
-// - Catch-all so "chad ..." always replies
 
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField } from 'discord.js';
@@ -24,7 +14,7 @@ const OWM = process.env.OPENWEATHER_API_KEY || null;
 const STATE_DIR  = fs.existsSync('/data') ? '/data' : path.resolve('./');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 
-// ---------- SINGLETON LOCK (auto-clears; env override) ----------
+// ---------- SINGLETON LOCK (prevents double posts; auto-cleans stale locks) ----------
 const LOCK_PATH = path.join(STATE_DIR, 'chad.lock');
 const MAX_LOCK_AGE_MS = (process.env.CHAD_LOCK_MAX_AGE_MINUTES
   ? Number(process.env.CHAD_LOCK_MAX_AGE_MINUTES) : 10) * 60 * 1000;
@@ -37,7 +27,7 @@ try {
     console.warn('🧹 Stale lock detected. Removing:', LOCK_PATH);
     fs.rmSync(LOCK_PATH, { force: true });
   }
-} catch { /* no prior lock */ }
+} catch {}
 
 let _lockFd = null;
 try {
@@ -114,8 +104,7 @@ function normalizeWake(content, client) {
   return c;
 }
 
-// --- Template renderer for easter_eggs ---
-// Supports: {{a.b.c}}, {{arr[0]}}, {{lore.founders|join}}
+// --- Template renderer for easter_eggs ({{a.b}}, {{arr[0]}}, {{lore.list|join}}) ---
 function tmplResolve(pathExpr, obj) {
   const parts = pathExpr.replace(/\[(\d+)\]/g, '.$1').split('.');
   let cur = obj;
@@ -153,6 +142,7 @@ function pickPiped(reply){
 }
 
 // ---------- WEATHER/TIME ----------
+// US/CA normalization for city queries (weather)
 const US_STATES = {alabama:"AL",alaska:"AK",arizona:"AZ",arkansas:"AR",california:"CA",colorado:"CO",connecticut:"CT",delaware:"DE","district of columbia":"DC",florida:"FL",georgia:"GA",hawaii:"HI",idaho:"ID",illinois:"IL",indiana:"IN",iowa:"IA",kansas:"KS",kentucky:"KY",louisiana:"LA",maine:"ME",maryland:"MD",massachusetts:"MA",michigan:"MI",minnesota:"MN",mississippi:"MS",missouri:"MO",montana:"MT",nebraska:"NE",nevada:"NV","new hampshire":"NH","new jersey":"NJ","new mexico":"NM","new york":"NY","north carolina":"NC","north dakota":"ND",ohio:"OH",oklahoma:"OK",oregon:"OR",pennsylvania:"PA","rhode island":"RI","south carolina":"SC","south dakota":"SD",tennessee:"TN",texas:"TX",utah:"UT",vermont:"VT",virginia:"VA",washington:"WA","west virginia":"WV",wisconsin:"WI",wyoming:"WY"};
 const CA_PROV  = {alberta:"AB","british columbia":"BC",manitoba:"MB","new brunswick":"NB","newfoundland and labrador":"NL","nova scotia":"NS",ontario:"ON","prince edward island":"PE",quebec:"QC",saskatchewan:"SK","northwest territories":"NT",nunavut:"NU",yukon:"YT"};
 function normalizeCityQuery(qRaw) {
@@ -162,11 +152,43 @@ function normalizeCityQuery(qRaw) {
   const m = q.match(/^(.+?)[,\s]+([A-Za-z .'-]+)$/);
   if (m) {
     const city = m[1].trim();
-       const region = m[2].trim().toLowerCase();
+    const region = m[2].trim().toLowerCase();
     if (US_STATES[region]) return `${city},${US_STATES[region]},US`;
     if (CA_PROV[region])   return `${city},${CA_PROV[region]},CA`;
   }
   return q;
+}
+
+// --- TIME ZONE ALIASES (countries + big cities) ---
+const TZ_MAP = {
+  "winnipeg":"America/Winnipeg","manitoba":"America/Winnipeg","brandon":"America/Winnipeg",
+  "new york":"America/New_York","nyc":"America/New_York","eastern":"America/New_York",
+  "los angeles":"America/Los_Angeles","la":"America/Los_Angeles","pacific":"America/Los_Angeles",
+  "london":"Europe/London","uk":"Europe/London","united kingdom":"Europe/London","england":"Europe/London",
+  "manchester":"Europe/London","scotland":"Europe/London","wales":"Europe/London",
+  "seoul":"Asia/Seoul","south korea":"Asia/Seoul","republic of korea":"Asia/Seoul","korea (south)":"Asia/Seoul",
+  "pyongyang":"Asia/Pyongyang","north korea":"Asia/Pyongyang","dprk":"Asia/Pyongyang",
+  "sydney":"Australia/Sydney","australia":"Australia/Sydney",
+  "toronto":"America/Toronto","montreal":"America/Toronto","vancouver":"America/Vancouver",
+  "paris":"Europe/Paris","berlin":"Europe/Berlin","madrid":"Europe/Madrid",
+  "tokyo":"Asia/Tokyo","japan":"Asia/Tokyo","beijing":"Asia/Shanghai","china":"Asia/Shanghai",
+  "mexico city":"America/Mexico_City","mexico":"America/Mexico_City",
+  "rio":"America/Sao_Paulo","brazil":"America/Sao_Paulo",
+  "dubai":"Asia/Dubai","uae":"Asia/Dubai",
+  "delhi":"Asia/Kolkata","india":"Asia/Kolkata",
+  "cairo":"Africa/Cairo","egypt":"Africa/Cairo",
+  "nairobi":"Africa/Nairobi","kenya":"Africa/Nairobi"
+};
+function tzAlias(place) {
+  if (!place) return TZ;
+  const s = place.toLowerCase().trim();
+  if (TZ_MAP[s]) return TZ_MAP[s];
+  const clean = s.replace(/\b(time|the|city)\b/g, '').replace(/[.,]/g,'').trim();
+  if (TZ_MAP[clean]) return TZ_MAP[clean];
+  const parts = clean.split(/\s+/);
+  const last = parts[parts.length-1];
+  if (TZ_MAP[last]) return TZ_MAP[last];
+  return TZ;
 }
 function formatTime(zone) {
   const now = DateTime.now().setZone(zone || TZ);
@@ -322,7 +344,7 @@ function saveDynamicIntents(obj) { try { fs.writeFileSync(DYN_INTENTS_PATH, JSON
 let dynamicIntents = loadDynamicIntents();
 
 const R = (s) => new RegExp(s, 'i');
-const P_CHAD = '^\\s*(?:chad|<@!?\\d+>)\\s*,?\\s*'; // "chad" or mention, comma optional
+const P_CHAD = '^\\s*(?:chad|<@!?\\d+>)\\s*,?\\s*';
 
 const BUILTIN_INTENTS = [
   { // what/whats/what is wrong with the motel
@@ -383,7 +405,7 @@ async function routeIntent(message, contentNorm, gState) {
         await message.reply(rendered).catch(()=>{});
         return true;
       }
-    } catch {/* ignore bad pattern */}
+    } catch {}
   }
   return false;
 }
@@ -466,7 +488,7 @@ const CHAD_FALLBACKS = [
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
-  const content = normalizeWake(message.content || '', client); // normalize mentions
+  const content = normalizeWake(message.content || '', client);
   const gState = getGuildState(message.guild.id);
   gState.participants[message.author.id] = true;
 
@@ -485,22 +507,21 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // --- Time ---
-  const timeMatch =
-    content.match(/^chad[, ]\s*time(?:\s+in\s+(.+?))?[.?!]*$/i) ||
-    content.match(/^chad[, ]\s*what(?:'s| is)?\s+(?:the\s+)?time(?:\s+in\s+(.+?))?[.?!]*$/i) ||
-    content.match(/^chad[, ]\s*what\s+time\s+is\s+it(?:\s+in\s+(.+?))?[.?!]*$/i);
-  if (timeMatch) {
-    const place = timeMatch[1] || timeMatch[2] || timeMatch[3];
-    const zone = (() => {
-      const s = (place||'').toLowerCase().trim();
-      if (!s) return TZ;
-      if (/(brandon|manitoba|winnipeg|mb|prairies)/i.test(s)) return 'America/Winnipeg';
-      if (/new york|nyc|eastern/i.test(s)) return 'America/New_York';
-      if (/la|los angeles|pacific|pst|pdt/i.test(s)) return 'America/Los_Angeles';
-      if (/london|uk|gmt|britain/i.test(s)) return 'Europe/London';
-      return TZ;
-    })();
+  // --- Time (tolerant: “time UK”, “tell me the time in Seoul”, “what time is it in …”) ---
+  const timeRegexes = [
+    /^chad[, ]\s*time(?:\s+in\s+(.+))?[.?!]*$/i,
+    /^chad[, ]\s*what(?:'s| is)?\s+(?:the\s+)?time(?:\s+in\s+(.+))?[.?!]*$/i,
+    /^chad[, ]\s*what\s+time\s+is\s+it(?:\s+in\s+(.+))?[.?!]*$/i,
+    /^chad[, ]\s*tell\s+me\s+the\s+time(?:\s+in\s+(.+))?[.?!]*$/i,
+    /^chad[, ]\s*time\s+([A-Za-z ,'-]+)[.?!]*$/i
+  ];
+  let placeStr = null;
+  for (const rx of timeRegexes) {
+    const m = content.match(rx);
+    if (m) { placeStr = (m[1] || '').trim(); break; }
+  }
+  if (placeStr !== null) {
+    const zone = tzAlias(placeStr);
     await message.reply(formatTime(zone)).catch(()=>{});
     return;
   }
@@ -516,18 +537,22 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // --- Basement / NSFW helper (+ cheeky "who runs" replies) ---
-  if (/^chad[, ]\s*(what\s+is|where\s+is|tell\s+me\s+about|who\s+runs)\s+the\s+basement\??[.?!]*$/i.test(content)) {
+  // --- Basement / NSFW helper (+ cheeky variations, incl. “dungeon master”) ---
+  if (/^chad[, ]\s*(what\s+is|where\s+is|tell\s+me\s+about|who\s+runs|who\s+is|who's|who\s+is\s+in\s+charge|who\s+leads|who\s+owns|who\s+controls|who\s+manages|who\s+the\s+dungeon\s+master\s+is)\s+(the\s+)?(basement|dungeon|dungeon\s+master)\??[.?!]*$/i.test(content)) {
     const sfw  = brain?.guides?.channels?.sfw_jail  || "🔒the-broom-closet🧹";
     const nsfw = brain?.guides?.channels?.nsfw_jail || "🤫the-no-tell-motel-room💣";
     const dm   = brain?.guides?.dungeon_master || "Sunday";
-    if (/who\s+runs/i.test(content)) {
+
+    // If user literally asked "who …" return cheeky owner lines; otherwise provide helper text
+    if (/who\s/.test(content) || /dungeon\s+master/i.test(content)) {
       const responses = [
-        `👑 ${dm} rules the Basement with equal parts menace and glitter.`,
+        `👑 ${dm} runs the Basement, the Dungeon, and probably your curiosity.`,
+        `that would be **${dm}** — Keeper of Keys, Warden of Winks.`,
         `it’s run by **${dm}**. consent is the safeword.`,
-        `${dm} runs it. fog machine sold separately.`,
+        `the Dungeon Master? **${dm}**, obviously.`,
+        `${dm}. fog machine sold separately.`,
         `that’d be ${dm}. the keys jingle ominously.`,
-        `the Dungeon belongs to ${dm}. enter at your own peril—or delight.`
+        `the Basement belongs to ${dm}. enter at your own peril—or delight.`
       ];
       await message.reply(pick(responses)).catch(()=>{});
       return;
@@ -595,7 +620,7 @@ client.on('messageCreate', async (message) => {
         }
         return;
       }
-    } catch {/* ignore malformed egg */}
+    } catch {}
   }
 
   // --- Manual hint ---
@@ -618,10 +643,10 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // 2) Route to mystery BEFORE catch-all so triggers fire
+  // Route to mystery BEFORE catch-all so triggers fire
   await handleMystery(message, content);
 
-  // 3) Catch-alls so Chad always answers when addressed
+  // Catch-alls so Chad always answers when addressed
   if (/,chad\b/i.test(message.content)) {
     const pool = brain?.fallbacks?.length ? brain.fallbacks : CHAD_FALLBACKS;
     await message.reply(pick(pool)).catch(()=>{});
@@ -657,7 +682,7 @@ client.on('messageReactionAdd', async (reaction, user) => {
         }
         saveJSON(STATE_PATH, state);
       }
-    } catch { /* ignore */ }
+    } catch {}
   }, 1500);
 });
 
