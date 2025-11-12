@@ -1,43 +1,40 @@
-// CommonJS version (stable on Render + Node 20)
-require('dotenv').config();
+// index.js (ESM) — utility + mystery + lore + consented personalities
+// Works with Node 20+ and "type": "module" in package.json
 
-const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require('discord.js');
-const fs = require('fs');
-const path = require('path');
-const { DateTime } = require('luxon');
+import 'dotenv/config';
+import { Client, GatewayIntentBits, Partials, PermissionsBitField } from 'discord.js';
+import fs from 'fs';
+import path from 'path';
+import { DateTime } from 'luxon';
 
-// node-fetch (ESM) shim for CJS:
-const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
+// ---------- Config ----------
+const TZ  = process.env.TIMEZONE || 'America/New_York';
+const OWM = process.env.OPENWEATHER_API_KEY || null; // add in Render to enable weather
 
-// ------------ Config ------------
-const TZ = process.env.TIMEZONE || 'America/Winnipeg';
-const OWM = process.env.OPENWEATHER_API_KEY || null;
-
-// Prefer persistent disk at /data
-const STATE_DIR = fs.existsSync('/data') ? '/data' : path.resolve('./');
+// Prefer persistent disk at /data (Render) else local file
+const STATE_DIR  = fs.existsSync('/data') ? '/data' : path.resolve('./');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 const BRAIN_PATH = path.resolve('./brain.json');
 
-// ------------ JSON helpers ------------
-function loadJSON(p, fallback = {}) {
+// ---------- load/save helpers ----------
+const loadJSON = (p, fallback = {}) => {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
   catch { return fallback; }
-}
-function saveJSON(p, obj) {
+};
+const saveJSON = (p, obj) => {
   try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch {}
   fs.writeFileSync(p, JSON.stringify(obj, null, 2));
-}
+};
 
-// Load brain + state
-let brain = loadJSON(BRAIN_PATH, { fortunes: ["default fortune"] });
-let state = loadJSON(STATE_PATH, {});
+let brain = loadJSON(BRAIN_PATH, { fortunes: ["the light remembers."], ambient: [] });
+let state = loadJSON(STATE_PATH, {}); // { [guildId]: { stage, gates, cooldowns, participants, prefs } }
 
-// ------------ Discord client ------------
+// ---------- discord client ----------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions
   ],
@@ -47,35 +44,48 @@ const client = new Client({
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
   console.log(`Using state path: ${STATE_PATH}`);
-  // Ambient hauntings every ~3h
+
+  // Ambient: drop a random line every ~3 hours
   setInterval(async () => {
-    if (!brain.ambient?.length) return;
+    if (!brain.ambient || !brain.ambient.length) return;
     for (const [gid] of client.guilds.cache) {
       const guild = client.guilds.cache.get(gid);
       if (!guild) continue;
-      const chan = guild.systemChannel || guild.channels.cache.find(c => c.isTextBased?.() && c.viewable);
+      const chan =
+        guild.systemChannel ||
+        guild.channels.cache.find(c => c?.isTextBased?.() && c.viewable);
       if (!chan) continue;
-      if (Math.random() < 0.35) chan.send(pick(brain.ambient));
+      if (Math.random() < 0.35) {
+        try { await chan.send(pick(brain.ambient)); } catch {}
+      }
     }
   }, 1000 * 60 * 60 * 3);
 });
 
-// ------------ Small utils ------------
+// ---------- small utils ----------
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-function getGuildState(gid) {
-  if (!state[gid]) {
-    state[gid] = { stage: 1, gates: {}, cooldowns: {}, participants: {}, prefs: { consents: {} } };
+function getGuildState(guildId) {
+  if (!state[guildId]) {
+    state[guildId] = {
+      stage: 1,
+      gates: {},             // stage-specific progress
+      cooldowns: {},         // daily keys like { hint_3: 'YYYY-MM-DD' }
+      participants: {},      // userId: true
+      prefs: { consents: {} } // personality consents by user
+    };
     saveJSON(STATE_PATH, state);
   }
-  return state[gid];
+  return state[guildId];
 }
+
 function nowInWindow(sh, sm, eh, em) {
-  const now = DateTime.now().setZone(TZ);
+  const now   = DateTime.now().setZone(TZ);
   const start = now.set({ hour: sh, minute: sm, second: 0 });
   const end   = now.set({ hour: eh, minute: em, second: 0 });
   return now >= start && now <= end;
 }
+
 function hasDailyCooldown(gState, key) {
   const stamp = gState.cooldowns[key];
   const today = DateTime.now().setZone(TZ).toISODate();
@@ -85,28 +95,30 @@ function setDailyCooldown(gState, key) {
   gState.cooldowns[key] = DateTime.now().setZone(TZ).toISODate();
   saveJSON(STATE_PATH, state);
 }
+
+// Very small place→timezone helper for common motel locales
 function tzAlias(name) {
   const s = (name || '').toLowerCase().trim();
   if (!s) return TZ;
-  if (/(brandon|manitoba|winnipeg|mb)/.test(s)) return 'America/Winnipeg';
-  if (/(new york|nyc|eastern)/.test(s)) return 'America/New_York';
-  if (/(los angeles|la|pacific)/.test(s)) return 'America/Los_Angeles';
-  if (/(london|uk|britain|gmt)/.test(s)) return 'Europe/London';
-  return TZ;
+  if (/(brandon|manitoba|winnipeg|mb|prairies)/.test(s)) return 'America/Winnipeg';
+  if (/(new york|nyc|eastern)/.test(s))                 return 'America/New_York';
+  if (/(los angeles|^la$|pacific)/.test(s))             return 'America/Los_Angeles';
+  if (/(london|uk|gmt|britain)/.test(s))                return 'Europe/London';
+  return TZ; // fallback to configured TZ
 }
 
-// ------------ Roast homage ------------
+// ---------- roast homage ----------
 const roastRegex = /(sts\b|over[-\s]?polic|too many rules|north\s*korea|rule\s*police)/i;
 async function maybeRoast(message, gState) {
   if (!roastRegex.test(message.content)) return;
   if (hasDailyCooldown(gState, 'roast_daily')) return;
   const pool = brain.roast_pool || [];
   if (!pool.length) return;
-  await message.reply(pick(pool)).catch(()=>{});
+  try { await message.reply(pick(pool)); } catch {}
   setDailyCooldown(gState, 'roast_daily');
 }
 
-// ------------ Roles/channels for finale ------------
+// ---------- role/channel helpers for finale ----------
 async function ensureKeyholderRole(guild) {
   let role = guild.roles.cache.find(r => r.name === 'Keyholder');
   if (!role) role = await guild.roles.create({ name: 'Keyholder', color: 0xff66cc, reason: 'Mystery reward role' });
@@ -119,7 +131,7 @@ async function ensureArchiveChannel(guild, role) {
       name: 'archive-of-truth',
       reason: 'Mystery finale secret room',
       permissionOverwrites: [
-        { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+        { id: guild.roles.everyone, deny:  [PermissionsBitField.Flags.ViewChannel] },
         { id: role.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] }
       ]
     });
@@ -127,20 +139,20 @@ async function ensureArchiveChannel(guild, role) {
   return chan;
 }
 
-// ------------ Hints ------------
+// ---------- hints ----------
 async function maybeHint(message, gState, stageObj) {
-  if (!stageObj.hints?.length) return;
+  if (!stageObj.hints || !stageObj.hints.length) return;
   const key = `hint_${gState.stage}`;
   if (hasDailyCooldown(gState, key)) return;
   if (/^chad[, ]/i.test(message.content)) {
-    await message.channel.send(pick(stageObj.hints)).catch(()=>{});
+    try { await message.channel.send(pick(stageObj.hints)); } catch {}
     setDailyCooldown(gState, key);
   }
 }
 
-// ------------ Mystery engine ------------
+// ---------- mystery engine ----------
 async function handleMystery(message) {
-  const gState = getGuildState(message.guild.id);
+  const gState   = getGuildState(message.guild.id);
   const stageObj = (brain.stages || []).find(s => s.number === gState.stage);
   if (!stageObj) return;
 
@@ -150,39 +162,45 @@ async function handleMystery(message) {
   if (stageObj.timeWindow) {
     const [sh, sm, eh, em] = stageObj.timeWindow;
     if (!nowInWindow(sh, sm, eh, em)) {
-      await message.reply(stageObj.timeLockedReply || "too early. so ambitious. so wrong.").catch(()=>{});
+      try { await message.reply(stageObj.timeLockedReply || "too early. so ambitious. so wrong."); } catch {}
       return;
     }
   }
 
   switch (gState.stage) {
     case 3: {
-      await message.channel.send(stageObj.response).catch(()=>{});
-      if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{});
+      try {
+        await message.channel.send(stageObj.response);
+        if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt);
+      } catch {}
       gState.gates.s3 = gState.gates.s3 || { confessors: {} };
       break;
     }
     case 6: {
-      await message.channel.send(stageObj.response).catch(()=>{});
-      if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{});
-      gState.gates.s6 = { sequence: [] };
+      try {
+        await message.channel.send(stageObj.response);
+        if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt);
+      } catch {}
+      gState.gates.s6 = { sequence: [], done: false };
       break;
     }
     case 7: {
-      await message.channel.send(stageObj.response).catch(()=>{});
-      if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt).catch(()=>{});
+      try {
+        await message.channel.send(stageObj.response);
+        if (stageObj.taskPrompt) await message.channel.send(stageObj.taskPrompt);
+      } catch {}
       gState.gates.s7 = { apologyBy: null, forgivenessBy: null };
       break;
     }
     case 9: {
       const pollMsg = await message.channel.send(stageObj.response).catch(()=>null);
-      if (pollMsg){ await pollMsg.react('✅').catch(()=>{}); await pollMsg.react('❌').catch(()=>{}); }
+      if (pollMsg) { await pollMsg.react('✅').catch(()=>{}); await pollMsg.react('❌').catch(()=>{}); }
       gState.gates.s9 = { pollId: pollMsg?.id || null, closed: false };
       saveJSON(STATE_PATH, state);
       return;
     }
     case 10: {
-      await message.channel.send(stageObj.response).catch(()=>{});
+      try { await message.channel.send(stageObj.response); } catch {}
       const role = await ensureKeyholderRole(message.guild);
       const chan = await ensureArchiveChannel(message.guild, role);
       const contributors = Object.keys(gState.participants || {});
@@ -192,11 +210,11 @@ async function handleMystery(message) {
           await member.roles.add(role).catch(()=>{});
         }
       }
-      await chan.send(brain.finaleRoomWelcome || "Welcome, Keyholders.").catch(()=>{});
+      try { await chan.send(brain.finaleRoomWelcome || "Welcome, Keyholders."); } catch {}
       break;
     }
     default: {
-      await message.channel.send(stageObj.response).catch(()=>{});
+      try { await message.channel.send(stageObj.response); } catch {}
     }
   }
 
@@ -206,17 +224,17 @@ async function handleMystery(message) {
   saveJSON(STATE_PATH, state);
 }
 
-// ------------ Utilities: time / weather / facts ------------
+// ---------- utilities: time / weather / facts ----------
 function formatTime(zone) {
-  const now = DateTime.now().setZone(zone || TZ);
+  const now  = DateTime.now().setZone(zone || TZ);
   const nice = now.toFormat("ccc, LLL d 'at' h:mm a");
   return `🕰️ ${nice} (${zone})`;
 }
 async function fetchWeather(qRaw) {
-  if (!OWM) return { err: "Weather not set up. (Add OPENWEATHER_API_KEY)" };
-  const q = (qRaw || '').trim() || 'Brandon,CA';
+  if (!OWM) return { err: "Weather not set up. Ask the Innkeeper to add OPENWEATHER_API_KEY." };
+  const q   = (qRaw || '').trim() || 'Brandon,CA';
   const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(q)}&appid=${OWM}&units=metric`;
-  const r = await fetch(url);
+  const r   = await fetch(url);
   if (!r.ok) return { err: `couldn't fetch weather for "${q}".` };
   const data = await r.json();
   const d = data.weather?.[0]?.description || 'weather';
@@ -232,7 +250,7 @@ function randomFact() {
   return pick(pool);
 }
 
-// ------------ Consent & Modes ------------
+// ---------- Consent & personality modes ----------
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 function ensurePrefs(gState) {
@@ -259,6 +277,7 @@ function clearConsent(gState, uid) {
   delete gState.prefs.consents[uid];
   saveJSON(STATE_PATH, state);
 }
+
 function isNSFW(message) {
   const ch = message.channel;
   return Boolean(ch.nsfw || ch.parent?.nsfw);
@@ -271,45 +290,46 @@ function pickFrom(key) {
   return pool.length ? pick(pool) : null;
 }
 
-// ------------ Message handler ------------
+// ---------- message & reactions ----------
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
-
   const gState = getGuildState(message.guild.id);
   gState.participants[message.author.id] = true;
 
-  const content = message.content;
-
-  // Roast homage (daily cooldown)
+  // roast homage (rate-limited daily per guild)
   await maybeRoast(message, gState);
 
-  // Ask the motel (fortunes)
+  const content = message.content;
+
+  // ask the motel (fortunes)
   if (/^chad,\s*ask the motel\b/i.test(content)) {
     const pool = brain.fortunes || [];
-    if (pool.length) { await message.reply(pick(pool)).catch(()=>{}); return; }
+    if (pool.length) { try { await message.reply(pick(pool)); } catch {} return; }
   }
 
-  // Facts
+  // random fact
   if (/^chad,\s*(random fact|fact)$/i.test(content)) {
-    await message.reply(`📎 ${randomFact()}`).catch(()=>{});
+    try { await message.reply(`📎 ${randomFact()}`); } catch {}
     return;
   }
 
-  // Time
-  const timeMatch = content.match(/^chad,\s*time(?:\s+in\s+(.+))?$/i) || content.match(/^chad,\s*what(?:'s| is)\s+the\s+time(?:\s+in\s+(.+))?$/i);
+  // time: chad, time | chad, time in <place>
+  const timeMatch = content.match(/^chad,\s*time(?:\s+in\s+(.+))?$/i)
+                 || content.match(/^chad,\s*what(?:'s| is)\s+the\s+time(?:\s+in\s+(.+))?$/i);
   if (timeMatch) {
     const place = timeMatch[1];
-    const zone = tzAlias(place);
-    await message.reply(formatTime(zone)).catch(()=>{});
+    const zone  = tzAlias(place);
+    try { await message.reply(formatTime(zone)); } catch {}
     return;
   }
 
-  // Weather
-  const wMatch = content.match(/^chad,\s*weather(?:\s+in\s+(.+))?$/i) || content.match(/^chad,\s*what(?:'s| is)\s+the\s+weather(?:\s+in\s+(.+))?$/i);
+  // weather: chad, weather | chad, weather in <city>
+  const wMatch = content.match(/^chad,\s*weather(?:\s+in\s+(.+))?$/i)
+              || content.match(/^chad,\s*what(?:'s| is)\s+the\s+weather(?:\s+in\s+(.+))?$/i);
   if (wMatch) {
     const city = (wMatch[1] || '').trim();
-    const res = await fetchWeather(city);
-    await message.reply(res.err ? `⚠️ ${res.err}` : res.text).catch(()=>{});
+    const res  = await fetchWeather(city);
+    try { await message.reply(res.err ? `⚠️ ${res.err}` : res.text); } catch {}
     return;
   }
 
@@ -319,107 +339,123 @@ client.on('messageCreate', async (message) => {
       const re = new RegExp(egg.trigger_regex, 'i');
       if (re.test(content)) {
         if (egg.responses_key && brain[egg.responses_key]) {
-          await message.reply(pick(brain[egg.responses_key])).catch(()=>{});
+          await message.reply(pick(brain[egg.responses_key]));
         } else if (egg.responses?.length) {
-          await message.reply(pick(egg.responses)).catch(()=>{});
+          await message.reply(pick(egg.responses));
         }
         return;
       }
     } catch {}
   }
 
-  // Consent commands
+  // ---------- Consent commands ----------
   if (/^chad,\s*consent\s+(mean|flirt|petty)\s*$/i.test(content)) {
     const mode = content.match(/(mean|flirt|petty)/i)[1].toLowerCase();
     giveConsent(gState, message.author.id, mode);
-    await message.reply(`✅ consent recorded for **${mode}** (24h). say “chad, be ${mode} to me”.`).catch(()=>{});
-    return;
-  }
-  if (/^chad,\s*opt\s*out$/i.test(content)) {
-    clearConsent(gState, message.author.id);
-    await message.reply("✅ consent cleared. i’ll behave. for now.").catch(()=>{});
+    try { await message.reply(`✅ consent recorded for **${mode}** (24h). say “chad, be ${mode} to me”.`); } catch {}
     return;
   }
 
-  // Mode prompts
+  if (/^chad,\s*opt\s*out$/i.test(content)) {
+    clearConsent(gState, message.author.id);
+    try { await message.reply("✅ consent cleared. i’ll behave. for now."); } catch {}
+    return;
+  }
+
+  // ---------- Mode prompts ----------
   if (/^chad,\s*be\s+mean\s+to\s+me$/i.test(content)) {
-    if (!hasConsent(gState, message.author.id, 'mean'))
-      return void message.reply("i need your consent. say: `chad, consent mean` (expires in 24h).").catch(()=>{});
+    if (!hasConsent(gState, message.author.id, 'mean')) {
+      try { await message.reply("i need your consent. say: `chad, consent mean` (expires in 24h)."); } catch {}
+      return;
+    }
     const line = pickFrom('mean_lines') || "mean mode unavailable.";
-    await message.reply(line).catch(()=>{});
+    try { await message.reply(line); } catch {}
     return;
   }
+
   if (/^chad,\s*be\s+petty\s+to\s+me$/i.test(content)) {
-    if (!hasConsent(gState, message.author.id, 'petty'))
-      return void message.reply("need consent first. say: `chad, consent petty`.").catch(()=>{});
+    if (!hasConsent(gState, message.author.id, 'petty')) {
+      try { await message.reply("need consent first. say: `chad, consent petty`."); } catch {}
+      return;
+    }
     const line = pickFrom('petty_lines') || "petty mode unavailable.";
-    await message.reply(line).catch(()=>{});
+    try { await message.reply(line); } catch {}
     return;
   }
+
   if (/^chad,\s*flirt\s+with\s+me$/i.test(content)) {
-    if (!hasConsent(gState, message.author.id, 'flirt'))
-      return void message.reply("need consent. say: `chad, consent flirt`.").catch(()=>{});
+    if (!hasConsent(gState, message.author.id, 'flirt')) {
+      try { await message.reply("need consent. say: `chad, consent flirt`."); } catch {}
+      return;
+    }
     let poolKey = 'flirt_sfw';
     if (isNSFW(message) && hasDungeonRole(message.member)) poolKey = 'flirt_spicy';
     const line = pickFrom(poolKey) || "flirt mode unavailable.";
-    await message.reply(line).catch(()=>{});
+    try { await message.reply(line); } catch {}
     return;
   }
 
-  // Mystery collectors before routing
+  // ---------- stage collectors before routing ----------
+  // Stage 3: collect 5 unique confessions ("i never" etc.)
   if (gState.stage === 3 && gState.gates.s3) {
     const isConfession = /(\bi never\b|\bi’ve?\s+never\b|\bi have never\b)/i.test(content);
     if (isConfession) {
       gState.gates.s3.confessors[message.author.id] = true;
       const count = Object.keys(gState.gates.s3.confessors).length;
       if (count >= 5) {
-        await message.channel.send("✅ *Delicious.* Honesty always tastes a bit like blood. The lock twitched. Try the **ledger** next—if it doesn’t bite first.").catch(()=>{});
+        try {
+          await message.channel.send("✅ *Delicious.* Honesty always tastes a bit like blood. The lock twitched. Try the **ledger** next—if it doesn’t bite first.");
+        } catch {}
         gState.stage = 4; delete gState.gates.s3;
       } else {
-        await message.channel.send(`confession logged (${count}/5). the motel is listening.`).catch(()=>{});
+        try { await message.channel.send(`confession logged (${count}/5). the motel is listening.`); } catch {}
       }
       saveJSON(STATE_PATH, state);
       return;
     }
   }
+
+  // Stage 6: alternating conf/joke pattern (3 + 3)
   if (gState.stage === 6 && gState.gates.s6) {
-    const s6 = gState.gates.s6;
+    const s6   = gState.gates.s6;
     const conf = /\b(i\s+(feel|am|was|think))\b/i.test(content);
     const joke = /(lol|lmao|😂|meme)/i.test(content);
     if (conf || joke) {
       const want = s6.sequence.length % 2 === 0 ? 'conf' : 'joke';
-      const typ = conf ? 'conf' : 'joke';
+      const typ  = conf ? 'conf' : 'joke';
       if (typ === want) {
         s6.sequence.push(typ);
         const progress = s6.sequence.length;
-        await message.channel.send(`pattern accepted (${progress}/6).`).catch(()=>{});
+        try { await message.channel.send(`pattern accepted (${progress}/6).`); } catch {}
         if (progress >= 6) {
-          await message.channel.send("✅ The light purrs. Doors adjust their posture. Something’s ready to be said out loud.").catch(()=>{});
+          try { await message.channel.send("✅ The light purrs. Doors adjust their posture. Something’s ready to be said out loud."); } catch {}
           gState.stage = 7; delete gState.gates.s6; saveJSON(STATE_PATH, state);
         } else saveJSON(STATE_PATH, state);
       } else {
-        await message.channel.send("nope. wrong flavor. alternate confession ↔ joke.").catch(()=>{});
+        try { await message.channel.send("nope. wrong flavor. alternate confession ↔ joke."); } catch {}
       }
     }
   }
+
+  // Stage 7: apology + forgiveness
   if (gState.stage === 7 && gState.gates.s7) {
     const s7 = gState.gates.s7;
     if (!s7.apologyBy && /\b(sorry|apologize|apology)\b/i.test(content)) {
       s7.apologyBy = message.author.id;
-      await message.channel.send("apology archived. one more: forgiveness.").catch(()=>{});
+      try { await message.channel.send("apology archived. one more: forgiveness."); } catch {}
       saveJSON(STATE_PATH, state);
     } else if (!s7.forgivenessBy && /\b(i forgive|i’m forgiving|i forgive you)\b/i.test(content)) {
       s7.forgivenessBy = message.author.id;
-      await message.channel.send("✅ Accepted. The walls exhaled. next time, bring snacks.").catch(()=>{});
+      try { await message.channel.send("✅ Accepted. The walls exhaled. next time, bring snacks."); } catch {}
       gState.stage = 8; delete gState.gates.s7; saveJSON(STATE_PATH, state);
     }
   }
 
-  // Route to mystery stage handler
+  // finally, route to stage triggers & responses
   await handleMystery(message);
 });
 
-// Reaction watcher for Stage 9 vote
+// Stage 9 vote counting
 client.on('messageReactionAdd', async (reaction, user) => {
   if (user.bot || !reaction.message.guild) return;
   const gState = getGuildState(reaction.message.guild.id);
@@ -435,10 +471,10 @@ client.on('messageReactionAdd', async (reaction, user) => {
       if (!gState.gates.s9.closed && (yes + no) >= 3) {
         gState.gates.s9.closed = true;
         if (yes >= 2 && yes > no) {
-          await msg.reply("…you picked me. tragic. iconic. The door unlocks with a sound like laughter through teeth.").catch(()=>{});
+          await msg.reply("…you picked me. tragic. iconic. The door unlocks with a sound like laughter through teeth.");
           gState.stage = 10;
         } else {
-          await msg.reply("understood. deactivating emotional subroutines. goodbye forever. (back tomorrow.)").catch(()=>{});
+          await msg.reply("understood. deactivating emotional subroutines. goodbye forever. (back tomorrow.)");
           gState.stage = 10;
         }
         saveJSON(STATE_PATH, state);
@@ -447,5 +483,5 @@ client.on('messageReactionAdd', async (reaction, user) => {
   }, 1500);
 });
 
-// ---------- LOGIN ----------
+// ---------- login ----------
 client.login((process.env.DISCORD_TOKEN || '').trim());
