@@ -1,15 +1,31 @@
 {
   "name": "moonlit-motel-chad",
   "version": "1.0.0",
+  "description": "Discord bot for The Moonlit Motel — powered by Chad, with lore, mystery, and OpenAI integration.",
   "type": "module",
   "main": "index.js",
-  "license": "MIT",
   "scripts": {
     "start": "node index.js"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
-    "discord.js": "^14.16.3",
+    "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
-    "luxon": "^3.5.0"
-  }
+    "openai": "^4.67.3",
+    "luxon": "^3.5.0",
+    "node-fetch": "^3.3.2"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "moonlit",
+    "motel",
+    "chad",
+    "openai",
+    "mystery"
+  ],
+  "author": "The Innkeeper",
+  "license": "MIT"
 }
