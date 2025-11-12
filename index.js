@@ -1,12 +1,15 @@
-// Chad — Moonlit Motel bot (FULL BUILD wired to provided brain.json)
-// - Auto-clearing singleton lock (prevents double-posts)
-// - Normalizes @mentions into "chad, ..." so stage triggers match
-// - Weather/time + helpers
-// - Justice/basement Q&A
-// - Lore Q&A ("what is wrong with the motel", "who is soupy", etc.)
-// - Easter eggs with {{template}} support (paths, [idx], and |join)
-// - Mystery engine gates (3/6/7/9/10) using your brain.json triggers/hints
-// - Catch-all so "chad ..." always gets a reply
+// Chad — Moonlit Motel bot (FULL BUILD)
+// Node.js + discord.js + Luxon
+// Features:
+// - Singleton lock (prevents double posts)
+// - Normalize @mention → "chad, ..." so regex in brain.json matches
+// - Weather/Time helpers (US/CA normalization)
+// - Justice/Basement explainers (Sunday)
+// - Lore Q&A + "what's wrong with the motel?"
+// - Easter eggs with {{template}} support (paths, [idx], |join)
+// - Mystery engine using brain.stages (with gates 3/6/7/9/10)
+// - Intent engine (loose matching) + live teaching: learn/forget/list
+// - Catch-all so "chad ..." always replies
 
 import 'dotenv/config';
 import { Client, GatewayIntentBits, Partials, PermissionsBitField } from 'discord.js';
@@ -21,7 +24,7 @@ const OWM = process.env.OPENWEATHER_API_KEY || null;
 const STATE_DIR  = fs.existsSync('/data') ? '/data' : path.resolve('./');
 const STATE_PATH = path.join(STATE_DIR, 'state.json');
 
-// ---------- SINGLETON LOCK (auto-clears; optional env tuning) ----------
+// ---------- SINGLETON LOCK (auto-clears; env override) ----------
 const LOCK_PATH = path.join(STATE_DIR, 'chad.lock');
 const MAX_LOCK_AGE_MS = (process.env.CHAD_LOCK_MAX_AGE_MINUTES
   ? Number(process.env.CHAD_LOCK_MAX_AGE_MINUTES) : 10) * 60 * 1000;
@@ -55,13 +58,7 @@ const loadJSON = (p, fallback = {}) => { try { return JSON.parse(fs.readFileSync
 const saveJSON = (p, obj) => { try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch {} fs.writeFileSync(p, JSON.stringify(obj, null, 2)); };
 
 // ---------- DATA ----------
-let brain = loadJSON('./brain.json', {
-  roast_pool:["default roast"],
-  fortunes:["default fortune"],
-  ambient:["ambient line"],
-  facts_pool:["default fact"],
-  guides:{}, lore:{}, stages:[]
-});
+let brain = loadJSON('./brain.json', { roast_pool:["default roast"], fortunes:["default fortune"], ambient:["ambient line"], facts_pool:["default fact"], guides:{}, lore:{}, stages:[] });
 let state = loadJSON(STATE_PATH, {}); // guildId -> { stage, gates, cooldowns, participants, hintProg }
 
 // ---------- CLIENT ----------
@@ -117,10 +114,9 @@ function normalizeWake(content, client) {
   return c;
 }
 
-// --- Small template renderer for easter_eggs ---
-// Supports: {{a.b.c}}, {{arr[0]}}, {{lore.founders|join}}  (join with ", " by default)
+// --- Tiny template renderer for easter_eggs ---
+// Supports: {{a.b.c}}, {{arr[0]}}, {{lore.founders|join}}
 function tmplResolve(pathExpr, obj) {
-  // arr[2] support
   const parts = pathExpr.replace(/\[(\d+)\]/g, '.$1').split('.');
   let cur = obj;
   for (const p of parts) {
@@ -165,10 +161,10 @@ async function fetchWeather(qRaw) {
   const original = (qRaw || '').trim();
   const qNorm = normalizeCityQuery(original);
 
-  // 1) name
+  // Try by name
   let r = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(qNorm)}&appid=${OWM}&units=metric`);
   if (!r.ok) {
-    // 2) geocode
+    // Fallback to geocoding
     const gr = await fetch(`https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(qNorm)}&limit=1&appid=${OWM}`);
     if (gr.ok) {
       const g = await gr.json();
@@ -282,7 +278,7 @@ function buildJusticeExplainer() {
   return ["🏛️ **Moonlit Motel — Justice System**", summary, "", nominations, court, sentence, serious, forums, consent].join("\n");
 }
 
-// ---------- MOTEL STATUS / SOUPY HELPERS ----------
+// ---------- MOTEL STATUS / SOUPY ----------
 function buildMotelStatus(gState) {
   const ov = brain?.lore_overview || [
     "The hall lights hum in the wrong key.",
@@ -296,6 +292,7 @@ function buildMotelStatus(gState) {
   return ["🛎️ **What’s wrong with the Motel?**", `• **Current stage:** ${stage}`, `• **Observation:** ${pick(ov)}`, `• **Tip:** ${tip}`].join("\n");
 }
 function buildSoupyLore() {
+  // Use lore.characters.soupy if you add it; else fallback
   const lines = brain?.lore?.characters?.soupy?.answers || [
     "🍲 **Soupy** was the first guest to fix the vending machine; now it hums their name.",
     "If you smell tomato basil at 3AM, don’t open the fridge. That’s Soupy passing through.",
@@ -304,13 +301,85 @@ function buildSoupyLore() {
   return `**Who is Soupy?**\n${pick(lines)}`;
 }
 
+// ---------- INTENT ENGINE (with teach/forget/list) ----------
+const DYN_INTENTS_PATH = path.join(STATE_DIR, 'brain_dynamic.json');
+function loadDynamicIntents() { try { return JSON.parse(fs.readFileSync(DYN_INTENTS_PATH,'utf8')); } catch { return { intents: [] }; } }
+function saveDynamicIntents(obj) { try { fs.writeFileSync(DYN_INTENTS_PATH, JSON.stringify(obj, null, 2)); } catch {} }
+let dynamicIntents = loadDynamicIntents();
+
+const R = (s) => new RegExp(s, 'i');
+const P_CHAD = '^\\s*(?:chad|<@!?\\d+>)\\s*,?\\s*'; // "chad" or mention, comma optional
+
+const BUILTIN_INTENTS = [
+  { // what/whats/what is wrong with the motel
+    name: 'MOTEL_STATUS',
+    patterns: [
+      R(`${P_CHAD}(?:what(?:'s|s|\\s+is)\\s+)?wrong\\s+with\\s+the\\s+motel\\s*\\??$`)
+    ],
+    handler: async (message, gState) => { await message.reply(buildMotelStatus(gState)).catch(()=>{}); }
+  },
+  {
+    name: 'SOUKY',
+    patterns: [ R(`${P_CHAD}(?:who\\s+is|tell\\s+me\\s+about)\\s+soupy\\s*\\??$`) ],
+    handler: async (message) => { await message.reply(buildSoupyLore()).catch(()=>{}); }
+  },
+  {
+    name: 'WHAT_ARE_YOU',
+    patterns: [ R(`${P_CHAD}what\\s+are\\s+you\\s*\\??$`) ],
+    handler: async (message) => { await message.reply("i’m the wiring between your jokes and your goosebumps. also: a discord bot.").catch(()=>{}); }
+  },
+  {
+    name: 'MOTEL_POINT',
+    patterns: [
+      R(`${P_CHAD}what\\s+is\\s+the\\s+point\\s+of\\s+the\\s+motel\\s*\\??$`),
+      R(`${P_CHAD}why\\s+does\\s+the\\s+motel\\s+exist\\s*\\??$`)
+    ],
+    handler: async (message) => {
+      const lines = brain?.lore?.motel_point || [
+        "to make room for heavy hearts and light nonsense at the same time.",
+        "to practice consent, comedy, and community without paperwork.",
+        "to be a place where secrets unlock doors instead of locking them."
+      ];
+      await message.reply(pick(lines)).catch(()=>{});
+    }
+  },
+  {
+    name: 'LORE_ORIGIN',
+    patterns: [
+      R(`${P_CHAD}(?:tell\\s+me\\s+the\\s+)?origin\\s+story\\s*\\??$`),
+      R(`${P_CHAD}(?:tell\\s+me\\s+)?the\\s+lore\\s+of\\s+the\\s+motel\\s*\\??$`),
+      R(`${P_CHAD}read\\s+the\\s+origin\\s*\\??$`)
+    ],
+    handler: async (message) => { await message.reply(renderTemplate(`{{lore.origin}}`, brain)).catch(()=>{}); }
+  }
+];
+
+async function routeIntent(message, contentNorm, gState) {
+  for (const intent of BUILTIN_INTENTS) {
+    if (intent.patterns.some(rx => rx.test(contentNorm))) {
+      await intent.handler(message, gState);
+      return true;
+    }
+  }
+  for (const it of (dynamicIntents.intents || [])) {
+    try {
+      const rx = new RegExp(it.pattern, 'i');
+      if (rx.test(contentNorm)) {
+        await message.reply(renderTemplate(it.reply, brain)).catch(()=>{});
+        return true;
+      }
+    } catch {/* ignore bad pattern */}
+  }
+  return false;
+}
+
 // ---------- MYSTERY ENGINE ----------
 async function handleMystery(message, contentNorm) {
   const gState = getGuildState(message.guild.id);
   const stageObj = (brain.stages || []).find(s => s.number === gState.stage);
   if (!stageObj) return;
 
-  // IMPORTANT: test triggers against normalized content (so "chad, ..." variants match)
+  // Evaluate triggers against normalized content
   const triggered = (stageObj.triggers || []).some(rx => new RegExp(rx, 'i').test(contentNorm));
   if (!triggered) { await maybeHint(message, gState, stageObj, contentNorm); return; }
 
@@ -383,8 +452,7 @@ const CHAD_FALLBACKS = [
 client.on('messageCreate', async (message) => {
   if (!message.guild || message.author.bot) return;
 
-  // Normalize content (turn mentions into "chad, ...")
-  const content = normalizeWake(message.content || '', client);
+  const content = normalizeWake(message.content || '', client); // normalize mentions
   const gState = getGuildState(message.guild.id);
   gState.participants[message.author.id] = true;
 
@@ -466,38 +534,35 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // --- Lore Q&A you asked for ---
-  if (/^chad[\s,]+\s*what\s+is\s+wrong\s+with\s+the\s+motel\??$/i.test(content)) {
-    await message.reply(buildMotelStatus(gState)).catch(()=>{});
+  // ===== TEACH / FORGET / LIST =====
+  let mLearn = content.match(/^chad[, ]\s*learn:\s*when\s+i\s+say\s+"(.+)"\s*reply\s+"([\s\S]+)"\s*$/i);
+  if (!mLearn) mLearn = content.match(/^chad[, ]\s*learn:\s*"(.+)"\s*->\s*"([\s\S]+)"\s*$/i);
+  if (mLearn) {
+    const pattern = mLearn[1].trim();
+    const reply = mLearn[2].trim();
+    dynamicIntents.intents.push({ pattern, reply });
+    saveDynamicIntents(dynamicIntents);
+    await message.reply(`✅ learned.\n• pattern: \`${pattern}\`\n• reply: ${reply.substring(0,400)}`).catch(()=>{});
     return;
   }
-  if (/^chad[\s,]+\s*(who\s+is|tell\s+me\s+about)\s+soupy\??$/i.test(content)) {
-    await message.reply(buildSoupyLore()).catch(()=>{});
+  const mForget = content.match(/^chad[, ]\s*forget:\s*"(.+)"\s*$/i);
+  if (mForget) {
+    const pat = mForget[1].trim();
+    const before = dynamicIntents.intents.length;
+    dynamicIntents.intents = dynamicIntents.intents.filter(x => x.pattern !== pat);
+    saveDynamicIntents(dynamicIntents);
+    await message.reply(before === dynamicIntents.intents.length ? `⚠️ i didn’t know that one.` : `🗑️ forgotten: \`${pat}\``).catch(()=>{});
     return;
   }
-  if (/^chad[\s,]+\s*what\s+are\s+you\??$/i.test(content)) {
-    await message.reply("i’m the wiring between your jokes and your goosebumps. also: a discord bot.").catch(()=>{});
+  if (/^chad[, ]\s*list\s+lessons$/i.test(content)) {
+    const list = dynamicIntents.intents.slice(0,12).map((x,i)=>`${i+1}. /${x.pattern}/ → ${x.reply.substring(0,80)}…`);
+    await message.reply(list.length ? "📚 **learned intents:**\n" + list.join("\n") : "📚 i haven’t learned any custom intents yet.").catch(()=>{});
     return;
   }
-  if (/^chad[\s,]+\s*what\s+is\s+the\s+point\s+of\s+the\s+motel\??$/i.test(content)) {
-    const lines = brain?.lore?.motel_point || [
-      "to make room for heavy hearts and light nonsense at the same time.",
-      "to practice consent, comedy, and community without paperwork.",
-      "to be a place where secrets unlock doors instead of locking them."
-    ];
-    await message.reply(pick(lines)).catch(()=>{});
-    return;
-  }
-  if (/^chad[\s,]+\s*tell\s+me\s+something\??$/i.test(content)) {
-    const pool = [
-      ...(brain?.facts_pool || []),
-      ...(brain?.ambient || []),
-      "mirrors answer questions you already asked.",
-      "some keys only turn when you forgive yourself."
-    ];
-    await message.reply(`📎 ${pick(pool)}`).catch(()=>{});
-    return;
-  }
+
+  // ===== INTENT ROUTER (loose matching for common asks) =====
+  const intentHit = await routeIntent(message, content, gState);
+  if (intentHit) return;
 
   // --- Easter eggs with template rendering from brain.json ---
   for (const egg of (brain.easter_eggs || [])) {
