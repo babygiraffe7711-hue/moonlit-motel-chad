@@ -271,7 +271,6 @@ const COMMANDS = [
 ];
 
 // Register slash commands on ready (guild-only for instant load)
-// FUTURE-PROOF: use Events.ClientReady instead of "ready"
 client.once(Events.ClientReady, async (c) => {
   console.log(`Logged in as ${c.user.tag}`);
 
@@ -860,12 +859,23 @@ function chadLine(tone) {
   return brain.normal[Math.floor(Math.random() * brain.normal.length)] || 'Relax — Chad’s here.';
 }
 
-// MAIN CHAT HANDLER — "Chad ..."
+// MAIN CHAT HANDLER — global "Chad" / ping trigger
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
-  const content = msg.content.trim().toLowerCase();
-  if (!content.startsWith('chad')) return;
+  const rawContent = msg.content || '';
+  const lower = rawContent.toLowerCase().trim();
+
+  // Let the dedicated summarizer handler own this phrase
+  if (lower.startsWith('chad, summarize')) return;
+
+  // Trigger conditions:
+  // 1) Direct @mention of Chad
+  // 2) The standalone word "chad" appears anywhere in the message (any case)
+  const mentionedByPing = msg.mentions.has(client.user);
+  const mentionedByName = /\bchad\b/i.test(rawContent);
+
+  if (!mentionedByPing && !mentionedByName) return;
 
   const tone = chadTone();
   const vibe = chadLine(tone);
@@ -874,9 +884,20 @@ client.on(Events.MessageCreate, async (msg) => {
     const reply = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: "You are CHAD — 6'4 of arrogant charm, chaotic flirt energy, confident, spooky at times, never apologetic unless sarcastic." },
-        { role: 'user', content: msg.content },
-        { role: 'assistant', content: vibe }
+        {
+          role: 'system',
+          content:
+            "You are CHAD — 6'4 of arrogant charm, chaotic flirt energy, confident, spooky at times, " +
+            "never apologetic unless sarcastic. You're replying inside a Discord server called the Moonlit Motel."
+        },
+        {
+          role: 'user',
+          content: rawContent
+        },
+        {
+          role: 'assistant',
+          content: vibe
+        }
       ]
     });
 
