@@ -145,7 +145,6 @@ const COURT_RELEASE_LINES = [
 
 // ===============================
 // PART 1 COMPLETE — READY FOR PART 2
-// Slash command registration next
 // ===============================
 
 // PART 2 — Slash Commands (Guild Only) + /nominate
@@ -283,8 +282,9 @@ client.once('ready', async () => {
 });
 
 // ===============================
-// /nominate implementation
+// /nominate implementation (with Lounge announcement)
 // ===============================
+
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
@@ -339,6 +339,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const msg = await court.send({ embeds: [embed] });
     await msg.react('✅');
     await msg.react('❌');
+
+    // NEW: Announce in the Lounge (no tagging the accused here)
+    const lounge = await findChannel(guild, CHANNELS.lounge);
+    if (lounge) {
+      const accusedName =
+        guild.members.cache.get(target.id)?.user.username ||
+        target.username ||
+        'a mysterious guest';
+
+      lounge.send(
+        `🔔 **A new case has been filed in the Motel Court!**\n` +
+        `Case #${id}: **${accusedName}** stands accused.\n` +
+        `Head to the court to cast your vote — justice needs your chaos.`
+      );
+    }
 
     gState.jail.cases[id].messageId = msg.id;
     saveState();
