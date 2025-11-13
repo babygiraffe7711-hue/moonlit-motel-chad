@@ -147,6 +147,8 @@ const COURT_RELEASE_LINES = [
 // PART 1 COMPLETE — READY FOR PART 2
 // ===============================
 
+
+
 // PART 2 — Slash Commands (Guild Only) + /nominate
 // ===============================
 
@@ -321,7 +323,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const court = await findChannel(guild, CHANNELS.court);
     if (!court) {
-      return interaction.reply({ content: `Court channel not found: ${CHANNELS.court}`, ephemeral: true });
+      return interaction.reply({ content: `Court channel not found: ${CHANNELS.court}`, flags: 64 });
     }
 
     const embed = {
@@ -340,7 +342,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await msg.react('✅');
     await msg.react('❌');
 
-    // NEW: Announce in the Lounge (no tagging the accused here)
+    // Announce in the Lounge (no tagging the accused here)
     const lounge = await findChannel(guild, CHANNELS.lounge);
     if (lounge) {
       const accusedName =
@@ -358,7 +360,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     gState.jail.cases[id].messageId = msg.id;
     saveState();
 
-    await interaction.reply({ content: `Nomination #${id} filed in the court.`, ephemeral: true });
+    await interaction.reply({ content: `Nomination #${id} filed in the court.`, flags: 64 });
   }
 });
 
@@ -378,19 +380,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const caseId = interaction.options.getInteger('case', true);
     const record = gState.jail.cases[caseId];
 
-    if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
+    if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, flags: 64 });
     if (record.status !== 'voting') {
-      return interaction.reply({ content: `Case #${caseId} is not in voting stage.`, ephemeral: true });
+      return interaction.reply({ content: `Case #${caseId} is not in voting stage.`, flags: 64 });
     }
 
     const court = await findChannel(guild, CHANNELS.court);
-    if (!court) return interaction.reply({ content: 'Court channel not found.', ephemeral: true });
+    if (!court) return interaction.reply({ content: 'Court channel not found.', flags: 64 });
 
     let nominationMsg;
     try {
       nominationMsg = await court.messages.fetch(record.messageId);
     } catch {
-      return interaction.reply({ content: 'Could not fetch original nomination message.', ephemeral: true });
+      return interaction.reply({ content: 'Could not fetch original nomination message.', flags: 64 });
     }
 
     const reactions = nominationMsg.reactions.cache;
@@ -431,7 +433,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         'Use the commands: /choosejail case:' + caseId + ' cell:sfw  OR  /choosejail case:' + caseId + ' cell:nsfw'
       );
 
-      return interaction.reply({ content: 'Guilty verdict recorded.', ephemeral: true });
+      return interaction.reply({ content: 'Guilty verdict recorded.', flags: 64 });
     }
 
     // Innocent
@@ -454,7 +456,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     await court.send(innocentLine);
 
-    return interaction.reply({ content: 'Not guilty verdict recorded.', ephemeral: true });
+    return interaction.reply({ content: 'Not guilty verdict recorded.', flags: 64 });
   }
 
   // /choosejail
@@ -463,18 +465,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const cell = interaction.options.getString('cell', true);
     const record = gState.jail.cases[caseId];
 
-    if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
+    if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, flags: 64 });
     if (record.status !== 'guilty') {
-      return interaction.reply({ content: `Case #${caseId} is not awaiting jail selection.`, ephemeral: true });
+      return interaction.reply({ content: `Case #${caseId} is not awaiting jail selection.`, flags: 64 });
     }
 
     if (interaction.user.id !== record.nomineeId) {
-      return interaction.reply({ content: `Only <@${record.nomineeId}> may choose their jail.`, ephemeral: true });
+      return interaction.reply({ content: `Only <@${record.nomineeId}> may choose their jail.`, flags: 64 });
     }
 
     const roleName = cell === 'sfw' ? ROLES.jail_sfw : ROLES.jail_nsfw;
     const role = findRole(guild, roleName);
-    if (!role) return interaction.reply({ content: `Role not found: ${roleName}`, ephemeral: true });
+    if (!role) return interaction.reply({ content: `Role not found: ${roleName}`, flags: 64 });
 
     const member = await guild.members.fetch(record.nomineeId);
     await member.roles.add(role);
@@ -506,7 +508,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
     }
 
-    return interaction.reply({ content: 'Jail chosen.', ephemeral: true });
+    return interaction.reply({ content: 'Jail chosen.', flags: 64 });
   }
 
   // /sentence
@@ -515,9 +517,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const punishment = interaction.options.getString('punishment', true);
     const record = gState.jail.cases[caseId];
 
-    if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
+    if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, flags: 64 });
     if (record.status !== 'jailed') {
-      return interaction.reply({ content: `Case #${caseId} is not in sentencing stage.`, ephemeral: true });
+      return interaction.reply({ content: `Case #${caseId} is not in sentencing stage.`, flags: 64 });
     }
 
     record.punishment = punishment;
@@ -567,7 +569,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
     }
 
-    return interaction.reply({ content: 'Punishment set.', ephemeral: true });
+    return interaction.reply({ content: 'Punishment set.', flags: 64 });
   }
 
   // /release
@@ -575,9 +577,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const caseId = interaction.options.getInteger('case', true);
     const record = gState.jail.cases[caseId];
 
-    if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
+    if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, flags: 64 });
     if (record.status !== 'awaiting_punishment') {
-      return interaction.reply({ content: `Case #${caseId} is not ready for release.`, ephemeral: true });
+      return interaction.reply({ content: `Case #${caseId} is not ready for release.`, flags: 64 });
     }
 
     const cell = record.cell;
@@ -615,7 +617,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
     }
 
-    return interaction.reply({ content: 'User released.', ephemeral: true });
+    return interaction.reply({ content: 'User released.', flags: 64 });
   }
 
   // /record
@@ -669,13 +671,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // /casearticle — newspaper-style writeup with quotes from court chat
   if (commandName === 'casearticle') {
+    // Defer immediately so Discord doesn't time out
+    await interaction.deferReply({ flags: 64 });
+
     const caseId = interaction.options.getInteger('case', true);
     const record = gState.jail.cases[caseId];
 
     if (!record) {
-      return interaction.reply({
-        content: `Case #${caseId} not found.`,
-        ephemeral: true
+      return interaction.editReply({
+        content: `Case #${caseId} not found.`
       });
     }
 
@@ -697,7 +701,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       `Chosen cell: ${cellLabel}\n` +
       `Punishment: ${punishmentText}\n`;
 
-    // NEW: pull quotes from Court of Weirdos transcript
+    // Pull quotes from Court of Weirdos transcript
     let quoteBlock = 'No notable quotes were captured for this case.';
     try {
       const court = await findChannel(guild, CHANNELS.court);
@@ -745,7 +749,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     } catch (err) {
       console.error('Error collecting case quotes:', err);
-      // fall back to default quoteBlock
+      // keep default quoteBlock
     }
 
     try {
@@ -773,18 +777,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const article = completion.choices[0].message.content;
 
-      return interaction.reply({
+      return interaction.editReply({
         content: `📰 **Moonlit Motel Gazette — Case #${caseId}**\n\n${article}`
       });
     } catch (err) {
       console.error('Error generating case article:', err);
-      return interaction.reply({
-        content: 'The printing press jammed, sweetheart. Try again in a bit.',
-        ephemeral: true
+      return interaction.editReply({
+        content: 'The printing press jammed, sweetheart. Try again in a bit.'
       });
     }
   }
 });
+
+
 
 // ===============================
 // PART 4 — CHAD PERSONALITY ENGINE + TRANSCRIPTS + AMBIENT
@@ -891,6 +896,8 @@ setInterval(() => {
     if (lounge) lounge.send(`🕯️ ${line}`);
   });
 }, 3 * 60 * 60 * 1000);
+
+
 
 // ===============================
 // PART 5 — FINAL LOGIN
