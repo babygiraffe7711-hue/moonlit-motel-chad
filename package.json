@@ -2,7 +2,7 @@
   "name": "moonlit-motel-chad",
   "version": "1.0.0",
   "description": "Discord bot for The Moonlit Motel — powered by Chad, with lore, mystery, and OpenAI integration.",
-  "type": "module",
+  "type": "commonjs",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
