@@ -19,8 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 
-// Node 18+ has global fetch. If not, you can uncomment the following and
-// install node-fetch: npm install node-fetch
+// If your Node version < 18, uncomment and install node-fetch.
 // const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // Load brain.json personality & lore
@@ -106,6 +105,7 @@ function getRecord(gState, userId) {
 }
 
 function pick(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
@@ -854,37 +854,27 @@ function chadTone() {
 }
 
 function chadLine(tone) {
-  const petty = Array.isArray(brain.petty) ? brain.petty : [];
+  const petty = Array.isArray(brain.petty_lines) ? brain.petty_lines : [];
   const ambient = Array.isArray(brain.ambient) ? brain.ambient : [];
-  const normal = Array.isArray(brain.normal) ? brain.normal : [];
+  const normal = Array.isArray(brain.mean_lines) ? brain.mean_lines : [];
 
   const pettyFallback = "You're adorable when you're wrong.";
   const ambientFallback = 'The halls whisper about you, doll.';
   const normalFallback = 'Relax — Chad’s here.';
 
   if (tone === 'snark') {
-    if (petty.length) {
-      return petty[Math.floor(Math.random() * petty.length)];
-    }
-    if (normal.length) {
-      return normal[Math.floor(Math.random() * normal.length)];
-    }
+    if (petty.length) return petty[Math.floor(Math.random() * petty.length)];
+    if (normal.length) return normal[Math.floor(Math.random() * normal.length)];
     return pettyFallback;
   }
 
   if (tone === 'haunt') {
-    if (ambient.length) {
-      return ambient[Math.floor(Math.random() * ambient.length)];
-    }
-    if (normal.length) {
-      return normal[Math.floor(Math.random() * normal.length)];
-    }
+    if (ambient.length) return ambient[Math.floor(Math.random() * ambient.length)];
+    if (normal.length) return normal[Math.floor(Math.random() * normal.length)];
     return ambientFallback;
   }
 
-  if (normal.length) {
-    return normal[Math.floor(Math.random() * normal.length)];
-  }
+  if (normal.length) return normal[Math.floor(Math.random() * normal.length)];
   return normalFallback;
 }
 
@@ -951,9 +941,7 @@ async function getWeatherSummary(locationRaw) {
     if (!res.ok) throw new Error('Weather API error');
     const data = await res.json();
 
-    if (!data.current_weather) {
-      throw new Error('No current weather');
-    }
+    if (!data.current_weather) throw new Error('No current weather');
 
     const cw = data.current_weather;
     const desc = WEATHER_CODES[cw.weathercode] || 'mysterious conditions';
@@ -997,7 +985,59 @@ async function getTimeSummary(locationRaw) {
   }
 }
 
-// MAIN CHAT HANDLER — global "Chad" / ping trigger + chocolate + weather/time
+// ====== EASTER EGG HELPERS ======
+function handleConfiguredEasterEgg(lower, msg) {
+  if (!Array.isArray(brain.easter_eggs)) return null;
+
+  for (const egg of brain.easter_eggs) {
+    if (!egg.trigger_regex) continue;
+    let re;
+    try {
+      re = new RegExp(egg.trigger_regex, 'i');
+    } catch {
+      continue;
+    }
+    if (!re.test(lower)) continue;
+
+    let reply = null;
+
+    if (Array.isArray(egg.responses) && egg.responses.length) {
+      reply = pick(egg.responses);
+    } else if (egg.responses_key && Array.isArray(brain[egg.responses_key])) {
+      reply = pick(brain[egg.responses_key]);
+    }
+
+    if (!reply) reply = "The motel blinks at you, confused.";
+    msg.reply(reply);
+    return true;
+  }
+
+  return false;
+}
+
+function handleStages(lower, msg) {
+  if (!Array.isArray(brain.stages)) return false;
+
+  for (const stage of brain.stages) {
+    if (!Array.isArray(stage.triggers)) continue;
+    for (const t of stage.triggers) {
+      let re;
+      try {
+        re = new RegExp(t, 'i');
+      } catch {
+        continue;
+      }
+      if (re.test(lower)) {
+        const text = stage.response || '…something shifts in the motel walls.';
+        msg.reply(text);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// MAIN CHAT HANDLER — global "Chad" / ping trigger + all extras
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
@@ -1030,6 +1070,78 @@ client.on(Events.MessageCreate, async (msg) => {
           "Tried to slip chocolate into your DMs, but your door's locked, sweetheart. 🍫"
         );
       }
+      return;
+    }
+
+    // 🔑 CONFIGURED EASTER EGGS (brain.easter_eggs)
+    if (handleConfiguredEasterEgg(lower, msg)) return;
+
+    // 🔑 STAGE / ARG TRIGGERS (simple version: just respond with stage.response)
+    if (handleStages(lower, msg)) return;
+
+    // 🎱 RANDOM FACT
+    if (lower.startsWith('chad, random fact')) {
+      const fact = pick(brain.facts_pool) ||
+        'Fact: you survived another day. The Motel is mildly impressed.';
+      await msg.reply(fact);
+      return;
+    }
+
+    // 🔮 FORTUNE
+    if (
+      lower.startsWith('chad, fortune') ||
+      lower.startsWith('chad, give me a fortune') ||
+      lower.startsWith('chad, gimme a fortune')
+    ) {
+      const fortune = pick(brain.fortunes) ||
+        'Your future contains snacks and questionable decisions.';
+      await msg.reply(`🧧 ${fortune}`);
+      return;
+    }
+
+    // 🔥 ROAST
+    if (
+      lower.startsWith('chad, roast me') ||
+      lower.startsWith('chad, random roast')
+    ) {
+      const line =
+        pick(brain.roast_pool) ||
+        pick(brain.mean_lines) ||
+        "You’re doing great… at making things harder than they need to be.";
+      await msg.reply(line);
+      return;
+    }
+
+    // 🏨 "ask the motel" — lore-flavoured answer
+    if (lower.startsWith('chad, ask the motel')) {
+      const question = rawContent.split(/ask the motel/i)[1]?.trim() || 'What is this place?';
+
+      const loreBits = [
+        brain.lore?.title,
+        brain.lore?.what_is_this,
+        brain.lore?.welcome
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are the collective consciousness of the Moonlit Motel, speaking through Chad. ' +
+              'Be poetic, eerie, and comforting. Keep responses under 200 words.'
+          },
+          {
+            role: 'user',
+            content:
+              `Lore:\n${loreBits}\n\nGuest question: ${question}`
+          }
+        ]
+      });
+
+      await msg.reply(completion.choices[0].message.content);
       return;
     }
 
@@ -1106,7 +1218,8 @@ client.on(Events.MessageCreate, async (msg) => {
 
 // AMBIENT HAUNTINGS — Every 3 hours
 setInterval(() => {
-  const line = brain.ambient[Math.floor(Math.random() * brain.ambient.length)] ||
+  const line =
+    pick(brain.ambient) ||
     'Something’s breathing behind the vending machine again.';
 
   client.guilds.cache.forEach(async (guild) => {
