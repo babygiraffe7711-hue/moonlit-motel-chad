@@ -19,8 +19,8 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 
-// Node 18+ has global fetch. If your runtime is older, install node-fetch
-// and uncomment this line:
+// Node 18+ has global fetch. If not, you can uncomment the following and
+// install node-fetch: npm install node-fetch
 // const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // Load brain.json personality & lore
@@ -675,6 +675,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // /casearticle — newspaper-style writeup with quotes from court chat
   if (commandName === 'casearticle') {
+    // NOTE: public for the whole motel — no flags here
     await interaction.deferReply();
 
     const caseId = interaction.options.getInteger('case', true);
@@ -704,6 +705,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       `Chosen cell: ${cellLabel}\n` +
       `Punishment: ${punishmentText}\n`;
 
+    // Pull quotes from Court of Weirdos transcript
     let quoteBlock = 'No notable quotes were captured for this case.';
     try {
       const court = await findChannel(guild, CHANNELS.court);
@@ -711,8 +713,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const transcript = gState.transcripts[court.id] || [];
         const startTime = record.timestamps?.nominatedAt || 0;
 
+        // Only messages after nomination
         let relevant = transcript.filter(m => m.ts >= startTime);
 
+        // Basic filters: length & non-empty
         relevant = relevant.filter(m => {
           const content = (m.content || '').trim();
           return content.length >= 5 && content.length <= 200;
@@ -749,6 +753,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     } catch (err) {
       console.error('Error collecting case quotes:', err);
+      // keep default quoteBlock
     }
 
     try {
@@ -759,7 +764,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             role: 'system',
             content:
               'You are Chad writing a dramatic, tongue-in-cheek motel newspaper article ' +
-              'about a court case at the Moonlit Motel. Write 2–4 short paragraphs, maximum 300 words.'
+              'about a court case at the Moonlit Motel. Write 2–4 short paragraphs, maximum 300 words. ' +
+              'Lean into noir / tabloid drama, but keep it playful and safe for a Discord community.'
           },
           {
             role: 'user',
@@ -848,17 +854,43 @@ function chadTone() {
 }
 
 function chadLine(tone) {
+  const petty = Array.isArray(brain.petty) ? brain.petty : [];
+  const ambient = Array.isArray(brain.ambient) ? brain.ambient : [];
+  const normal = Array.isArray(brain.normal) ? brain.normal : [];
+
+  const pettyFallback = "You're adorable when you're wrong.";
+  const ambientFallback = 'The halls whisper about you, doll.';
+  const normalFallback = 'Relax — Chad’s here.';
+
   if (tone === 'snark') {
-    return brain.petty[Math.floor(Math.random() * brain.petty.length)] || "You're adorable when you're wrong.";
+    if (petty.length) {
+      return petty[Math.floor(Math.random() * petty.length)];
+    }
+    if (normal.length) {
+      return normal[Math.floor(Math.random() * normal.length)];
+    }
+    return pettyFallback;
   }
+
   if (tone === 'haunt') {
-    return brain.ambient[Math.floor(Math.random() * brain.ambient.length)] || 'The halls whisper about you, doll.';
+    if (ambient.length) {
+      return ambient[Math.floor(Math.random() * ambient.length)];
+    }
+    if (normal.length) {
+      return normal[Math.floor(Math.random() * normal.length)];
+    }
+    return ambientFallback;
   }
-  return brain.normal[Math.floor(Math.random() * brain.normal.length)] || 'Relax — Chad’s here.';
+
+  if (normal.length) {
+    return normal[Math.floor(Math.random() * normal.length)];
+  }
+  return normalFallback;
 }
 
 // ========= WEATHER & TIME HELPERS =========
 
+// Basic mapping of Open-Meteo weather codes to text
 const WEATHER_CODES = {
   0: 'clear sky',
   1: 'mainly clear',
@@ -925,8 +957,8 @@ async function getWeatherSummary(locationRaw) {
 
     const cw = data.current_weather;
     const desc = WEATHER_CODES[cw.weathercode] || 'mysterious conditions';
-    const temp = cw.temperature;
-    const wind = cw.windspeed;
+    const temp = cw.temperature; // °C
+    const wind = cw.windspeed; // km/h
 
     return `In **${loc.name}${loc.country ? ', ' + loc.country : ''}** it's **${temp}°C** with **${desc}**, wind around **${wind} km/h**.`;
   } catch (err) {
@@ -969,75 +1001,77 @@ async function getTimeSummary(locationRaw) {
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
-  const rawContent = msg.content || '';
-  const lower = rawContent.toLowerCase().trim();
-
-  // Let the dedicated summarizer handler own this phrase
-  if (lower.startsWith('chad, summarize')) return;
-
-  // 🍫 CHOCOLATE EASTER EGG
-  const chocolatePattern = /\bchad\b.*\b(i\s*liek|i\s*like|i\s*want|give\s+me)\b.*\bchocolate\b/;
-  if (chocolatePattern.test(lower)) {
-    try {
-      await msg.author.send('🍫');
-    } catch (err) {
-      console.error('Could not DM chocolate:', err);
-      await msg.reply("Tried to slip chocolate into your DMs, but your door's locked, sweetheart. 🍫");
-    }
-    return;
-  }
-
-  // 🌦️ WEATHER INTENT
-  let weatherMatch = null;
-  if (lower.includes('weather') && lower.includes(' in ')) {
-    weatherMatch =
-      lower.match(/\bweather[^?]*\bin\s+([^?.,!]+)/) ||
-      lower.match(/\bweather\s+in\s+([^?.,!]+)/);
-  }
-
-  if (weatherMatch && weatherMatch[1]) {
-    const place = weatherMatch[1].trim();
-    if (place.length > 1) {
-      const replyText = await getWeatherSummary(place);
-      await msg.reply(replyText);
-      return;
-    }
-  }
-
-  // ⏰ TIME INTENT
-  let timeMatch = null;
-  if (lower.includes('time') && lower.includes(' in ')) {
-    timeMatch =
-      lower.match(/\btime[^?]*\bin\s+([^?.,!]+)/) ||
-      lower.match(/\btime\s+in\s+([^?.,!]+)/);
-  }
-
-  if (timeMatch && timeMatch[1]) {
-    const place = timeMatch[1].trim();
-    if (place.length > 1) {
-      const replyText = await getTimeSummary(place);
-      await msg.reply(replyText);
-      return;
-    }
-  }
-
-  // Trigger conditions for general AI chat:
-  // 1) Direct @mention of Chad
-  // 2) The standalone word "chad" appears anywhere
-  const mentionedByPing = msg.mentions.has(client.user);
-  const hasChadWord = /\bchad\b/i.test(rawContent);
-
-  if (!mentionedByPing && !hasChadWord) return;
-
-  console.log(
-    `[ChadTrigger] #${msg.channel?.name || 'unknown'} (${msg.channelId}) — ${rawContent}`
-  );
-
-  const tone = chadTone();
-  const vibe = chadLine(tone);
-
   try {
-    const reply = await openai.chat.completions.create({
+    const rawContent = msg.content || '';
+    const lower = rawContent.toLowerCase().trim();
+
+    // Let the dedicated summarizer handler own this phrase
+    if (lower.startsWith('chad, summarize')) return;
+
+    // If the message doesn't even contain "chad" anywhere and doesn't ping him, bail.
+    const mentionedByPing = msg.mentions.has(client.user);
+    const hasChadText = lower.includes('chad');
+
+    if (!mentionedByPing && !hasChadText) return;
+
+    console.log(
+      `[ChadTrigger] from ${msg.author.tag} in #${msg.channel?.name || 'unknown'}: ${rawContent}`
+    );
+
+    // 🍫 CHOCOLATE EASTER EGG
+    const chocolatePattern =
+      /\bchad\b.*\b(i\s*liek|i\s*like|i\s*want|give\s+me)\b.*\bchocolate\b/;
+    if (chocolatePattern.test(lower)) {
+      try {
+        await msg.author.send('🍫');
+      } catch (err) {
+        console.error('Could not DM chocolate:', err);
+        await msg.reply(
+          "Tried to slip chocolate into your DMs, but your door's locked, sweetheart. 🍫"
+        );
+      }
+      return;
+    }
+
+    // 🌦️ WEATHER INTENT
+    let weatherMatch = null;
+    if (lower.includes('weather') && lower.includes(' in ')) {
+      weatherMatch =
+        lower.match(/\bweather[^?]*\bin\s+([^?.,!]+)/) ||
+        lower.match(/\bweather\s+in\s+([^?.,!]+)/);
+    }
+
+    if (weatherMatch && weatherMatch[1]) {
+      const place = weatherMatch[1].trim();
+      if (place.length > 1) {
+        const replyText = await getWeatherSummary(place);
+        await msg.reply(replyText);
+        return;
+      }
+    }
+
+    // ⏰ TIME INTENT
+    let timeMatch = null;
+    if (lower.includes('time') && lower.includes(' in ')) {
+      timeMatch =
+        lower.match(/\btime[^?]*\bin\s+([^?.,!]+)/) ||
+        lower.match(/\btime\s+in\s+([^?.,!]+)/);
+    }
+
+    if (timeMatch && timeMatch[1]) {
+      const place = timeMatch[1].trim();
+      if (place.length > 1) {
+        const replyText = await getTimeSummary(place);
+        await msg.reply(replyText);
+        return;
+      }
+    }
+
+    // GENERAL CHAD RESPONSE
+    const tone = chadTone();
+    const vibe = chadLine(tone);
+
+    const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         {
@@ -1057,10 +1091,16 @@ client.on(Events.MessageCreate, async (msg) => {
       ]
     });
 
-    msg.reply(reply.choices[0].message.content);
+    await msg.reply(completion.choices[0].message.content);
   } catch (err) {
-    console.error(err);
-    msg.reply('The lights flickered too hard — try again, sweetheart.');
+    console.error('MAIN CHAD HANDLER ERROR:', err);
+    try {
+      await msg.reply(
+        "Something in the wiring sparked, doll. I heard you, but the universe glitched. Try me again in a sec."
+      );
+    } catch (e) {
+      console.error('Failed to send fallback reply:', e);
+    }
   }
 });
 
