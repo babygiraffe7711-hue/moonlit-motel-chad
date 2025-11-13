@@ -19,6 +19,10 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 
+// Node 18+ has global fetch. If not, you can uncomment the following and
+// install node-fetch: npm install node-fetch
+// const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
 // Load brain.json personality & lore
 const brain = require('./brain.json');
 
@@ -859,7 +863,116 @@ function chadLine(tone) {
   return brain.normal[Math.floor(Math.random() * brain.normal.length)] || 'Relax — Chad’s here.';
 }
 
-// MAIN CHAT HANDLER — global "Chad" / ping trigger + chocolate egg
+// ========= WEATHER & TIME HELPERS =========
+
+// Basic mapping of Open-Meteo weather codes to text
+const WEATHER_CODES = {
+  0: 'clear sky',
+  1: 'mainly clear',
+  2: 'partly cloudy',
+  3: 'overcast',
+  45: 'foggy',
+  48: 'rime fog',
+  51: 'light drizzle',
+  53: 'moderate drizzle',
+  55: 'dense drizzle',
+  61: 'light rain',
+  63: 'moderate rain',
+  65: 'heavy rain',
+  71: 'light snow',
+  73: 'moderate snow',
+  75: 'heavy snow',
+  80: 'light rain showers',
+  81: 'moderate rain showers',
+  82: 'violent rain showers',
+  95: 'thunderstorm',
+  96: 'thunderstorm with slight hail',
+  99: 'thunderstorm with heavy hail'
+};
+
+async function geocodeLocation(query) {
+  const url =
+    'https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name=' +
+    encodeURIComponent(query);
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Geo API error');
+  const data = await res.json();
+
+  if (!data.results || !data.results.length) {
+    const err = new Error('No results');
+    err.code = 'NO_RESULTS';
+    throw err;
+  }
+
+  const r = data.results[0];
+  return {
+    name: r.name,
+    country: r.country || '',
+    lat: r.latitude,
+    lon: r.longitude,
+    timezone: r.timezone
+  };
+}
+
+async function getWeatherSummary(locationRaw) {
+  try {
+    const loc = await geocodeLocation(locationRaw);
+    const url =
+      `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
+      '&current_weather=true';
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Weather API error');
+    const data = await res.json();
+
+    if (!data.current_weather) {
+      throw new Error('No current weather');
+    }
+
+    const cw = data.current_weather;
+    const desc = WEATHER_CODES[cw.weathercode] || 'mysterious conditions';
+    const temp = cw.temperature; // °C
+    const wind = cw.windspeed; // km/h
+
+    return `In **${loc.name}${loc.country ? ', ' + loc.country : ''}** it's **${temp}°C** with **${desc}**, wind around **${wind} km/h**.`;
+  } catch (err) {
+    if (err.code === 'NO_RESULTS') {
+      return "I couldn't find that place on the map, sweetheart. Try a bigger city or different spelling.";
+    }
+    console.error('Weather error:', err);
+    return "The weather spirits aren't picking up my call right now.";
+  }
+}
+
+async function getTimeSummary(locationRaw) {
+  try {
+    const loc = await geocodeLocation(locationRaw);
+
+    const now = new Date();
+    const options = {
+      timeZone: loc.timezone,
+      hour12: true,
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric'
+    };
+
+    const localString = now.toLocaleString('en-US', options);
+
+    return `In **${loc.name}${loc.country ? ', ' + loc.country : ''}** it's currently **${localString}** (${loc.timezone}).`;
+  } catch (err) {
+    if (err.code === 'NO_RESULTS') {
+      return "I couldn't place that on the globe, doll. Try a nearby city name.";
+    }
+    console.error('Time lookup error:', err);
+    return "Time is an illusion and so is my error handler. Try again in a minute.";
+  }
+}
+
+// MAIN CHAT HANDLER — global "Chad" / ping trigger + chocolate + weather/time
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
@@ -870,27 +983,57 @@ client.on(Events.MessageCreate, async (msg) => {
   if (lower.startsWith('chad, summarize')) return;
 
   // 🍫 CHOCOLATE EASTER EGG
-  // Examples:
-  // "chad, i like chocolate"
-  // "chad, i liek chocolate"
-  // "chad give me chocolate"
-  // "chad i want chocolate"
   const chocolatePattern = /\bchad\b.*\b(i\s*liek|i\s*like|i\s*want|give\s+me)\b.*\bchocolate\b/;
   if (chocolatePattern.test(lower)) {
     try {
       await msg.author.send('🍫');
     } catch (err) {
       console.error('Could not DM chocolate:', err);
-      // Fallback if DMs are closed
       await msg.reply("Tried to slip chocolate into your DMs, but your door's locked, sweetheart. 🍫");
     }
-    return; // Don't also do the normal AI reply for this easter egg trigger
+    return;
   }
 
-  // Trigger conditions:
+  // 🌦️ WEATHER INTENT
+  // e.g. "chad, what's the weather in paris", "chad what's the weather like in tokyo"
+  let weatherMatch = null;
+  if (lower.includes('weather') && lower.includes(' in ')) {
+    weatherMatch =
+      lower.match(/\bweather[^?]*\bin\s+([^?.,!]+)/) ||
+      lower.match(/\bweather\s+in\s+([^?.,!]+)/);
+  }
+
+  if (weatherMatch && weatherMatch[1]) {
+    const place = weatherMatch[1].trim();
+    if (place.length > 1) {
+      const replyText = await getWeatherSummary(place);
+      await msg.reply(replyText);
+      return;
+    }
+  }
+
+  // ⏰ TIME INTENT
+  // e.g. "chad, what's the time in london", "chad what time is it in sydney"
+  let timeMatch = null;
+  if (lower.includes('time') && lower.includes(' in ')) {
+    timeMatch =
+      lower.match(/\btime[^?]*\bin\s+([^?.,!]+)/) ||
+      lower.match(/\btime\s+in\s+([^?.,!]+)/);
+  }
+
+  if (timeMatch && timeMatch[1]) {
+    const place = timeMatch[1].trim();
+    if (place.length > 1) {
+      const replyText = await getTimeSummary(place);
+      await msg.reply(replyText);
+      return;
+    }
+  }
+
+  // Trigger conditions for general AI chat:
   // 1) Direct @mention of Chad
-  // 2) The standalone word "chad" appears anywhere in the message (any case)
-  // 3) Message starts with "chad" (covers "chad, are you alive", etc.)
+  // 2) The standalone word "chad" appears anywhere
+  // 3) Message starts with "chad"
   const mentionedByPing = msg.mentions.has(client.user);
   const mentionedByName = /\bchad\b/i.test(rawContent);
   const startsWithChad = lower.startsWith('chad');
