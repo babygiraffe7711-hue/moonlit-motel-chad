@@ -254,6 +254,18 @@ const COMMANDS = [
         required: true
       }
     ]
+  },
+  {
+    name: 'casearticle',
+    description: 'Have Chad write a motel newspaper article about a case.',
+    options: [
+      {
+        type: 4,
+        name: 'case',
+        description: 'Case ID',
+        required: true
+      }
+    ]
   }
 ];
 
@@ -336,7 +348,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 // ===============================
-// PART 3 — VERDICT, CHOOSEJAIL, SENTENCE, RELEASE, RECORD
+// PART 3 — VERDICT, CHOOSEJAIL, SENTENCE, RELEASE, RECORD, CASEARTICLE
 // ===============================
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -509,11 +521,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
       { case: caseId, user: accusedTag }
     );
 
+    // Announce in court
     if (court) {
       await court.send(
         sentenceLine + '\n' +
         accusedTag + ' must:\n> ' + punishment
       );
+    }
+
+    // Also announce in the correct jail channel (SFW or NSFW)
+    if (record.cell) {
+      let jailChannel = null;
+      if (record.cell === 'sfw') {
+        jailChannel = await findChannel(guild, CHANNELS.jail_sfw);
+      } else if (record.cell === 'nsfw') {
+        jailChannel = await findChannel(guild, CHANNELS.jail_nsfw);
+      }
+
+      if (jailChannel) {
+        await jailChannel.send(
+          sentenceLine + '\n' +
+          accusedTag + ' must:\n> ' + punishment
+        );
+      }
     }
 
     if (lounge) {
@@ -580,26 +610,164 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (!rec) {
       return interaction.reply({
-        content: `${target.username} has a clean Motel record... for now.`,
-        ephemeral: true
+        content: `${target.username} has a clean Motel record... for now.`
       });
     }
 
-    const lines = [
+    const headerLines = [
       `📂 **Motel Criminal Record for ${target.username}**`,
       '',
       `Total charges: **${rec.totalCharges || 0}**`,
       `Total guilty verdicts: **${rec.totalGuilty || 0}**`,
       `Total not guilty: **${rec.totalNotGuilty || 0}**`,
-      `Total releases: **${rec.totalReleases || 0}**`,
-      '',
-      `Cases involved: ${rec.cases && rec.cases.length ? '#' + rec.cases.join(', #') : 'none'}`
+      `Total releases: **${rec.totalReleases || 0}**`
     ];
 
+    // Detailed case list with crimes word-for-word
+    let caseLines = [];
+    if (rec.cases && rec.cases.length) {
+      caseLines.push('', '**Case details:**');
+      rec.cases.forEach((cid) => {
+        const c = gState.jail.cases[cid];
+        if (!c) return;
+
+        const statusLabel = (c.status || 'unknown').toUpperCase();
+        const punishmentText = c.punishment ? c.punishment : 'Not set yet';
+
+        caseLines.push(
+          `• **Case #${c.id} — ${statusLabel}**` +
+          `\n  **Crime:** ${c.reason}` +
+          `\n  **Justification:** ${c.justification}` +
+          `\n  **Punishment:** ${punishmentText}`
+        );
+      });
+    } else {
+      caseLines.push('', 'Cases involved: none');
+    }
+
+    const lines = [...headerLines, ...caseLines];
+
     return interaction.reply({
-      content: lines.join('\n'),
-      ephemeral: true
+      content: lines.join('\n')
     });
+  }
+
+  // /casearticle — newspaper-style writeup with quotes from court chat
+  if (commandName === 'casearticle') {
+    const caseId = interaction.options.getInteger('case', true);
+    const record = gState.jail.cases[caseId];
+
+    if (!record) {
+      return interaction.reply({
+        content: `Case #${caseId} not found.`,
+        ephemeral: true
+      });
+    }
+
+    const accusedTag = `<@${record.nomineeId}>`;
+    const accuserTag = `<@${record.nominatorId}>`;
+    const statusLabel = (record.status || 'unknown').toUpperCase();
+    const cellLabel = record.cell
+      ? (record.cell === 'sfw' ? 'SFW Jail' : 'NSFW Jail')
+      : 'No jail selected';
+    const punishmentText = record.punishment || 'No punishment recorded yet.';
+
+    const summaryContext =
+      `Moonlit Motel Court Case #${record.id}\n` +
+      `Status: ${statusLabel}\n` +
+      `Accused: ${accusedTag}\n` +
+      `Accuser: ${accuserTag}\n` +
+      `Crime: ${record.reason}\n` +
+      `Justification: ${record.justification}\n` +
+      `Chosen cell: ${cellLabel}\n` +
+      `Punishment: ${punishmentText}\n`;
+
+    // NEW: pull quotes from Court of Weirdos transcript
+    let quoteBlock = 'No notable quotes were captured for this case.';
+    try {
+      const court = await findChannel(guild, CHANNELS.court);
+      if (court) {
+        const transcript = gState.transcripts[court.id] || [];
+        const startTime = record.timestamps?.nominatedAt || 0;
+
+        // Only messages after nomination
+        let relevant = transcript.filter(m => m.ts >= startTime);
+
+        // Basic filters: length & non-empty
+        relevant = relevant.filter(m => {
+          const content = (m.content || '').trim();
+          return content.length >= 5 && content.length <= 200;
+        });
+
+        if (relevant.length > 0) {
+          const keywords = [
+            'guilty', 'innocent', 'jail', 'sentence', 'sentenced',
+            'court', 'verdict', 'style', 'crime', 'case'
+          ];
+          const accusedMention = `<@${record.nomineeId}>`;
+          const accuserMention = `<@${record.nominatorId}>`;
+
+          const good = relevant.filter(m => {
+            const content = m.content || '';
+            const lc = content.toLowerCase();
+            return (
+              keywords.some(k => lc.includes(k)) ||
+              content.includes(accusedMention) ||
+              content.includes(accuserMention)
+            );
+          });
+
+          const pool = good.length ? good : relevant;
+          const selected = pool.slice(0, 5);
+
+          if (selected.length > 0) {
+            quoteBlock = selected.map(m => {
+              const content = (m.content || '').replace(/\n/g, ' ').trim();
+              return `<@${m.user}> said: "${content}"`;
+            }).join('\n');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error collecting case quotes:', err);
+      // fall back to default quoteBlock
+    }
+
+    try {
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are Chad writing a dramatic, tongue-in-cheek motel newspaper article ' +
+              'about a court case at the Moonlit Motel. Write 2–4 short paragraphs, maximum 300 words. ' +
+              'Lean into noir / tabloid drama, but keep it playful and safe for a Discord community.'
+          },
+          {
+            role: 'user',
+            content:
+              'Generate a newspaper-style article describing this case, including the accuser, ' +
+              'accused, crime, verdict/status, jail cell, and punishment. Use their Discord mentions as written.\n\n' +
+              summaryContext +
+              '\n\nWitness quotes from the Court of Weirdos chat (use some of them in the story):\n' +
+              quoteBlock
+          }
+        ]
+      });
+
+      const article = completion.choices[0].message.content;
+
+      return interaction.reply({
+        content: `📰 **Moonlit Motel Gazette — Case #${caseId}**\n\n${article}`
+      });
+    } catch (err) {
+      console.error('Error generating case article:', err);
+      return interaction.reply({
+        content: 'The printing press jammed, sweetheart. Try again in a bit.',
+        ephemeral: true
+      });
+    }
   }
 });
 
