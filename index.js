@@ -40,9 +40,13 @@ function getGuildState(gid) {
     state[gid] = {
       jail: { lastId: 0, cases: {} },
       transcripts: {},
-      prefs: {}
+      prefs: {},
+      records: {} // criminal records per user
     };
     saveState();
+  }
+  if (!state[gid].records) {
+    state[gid].records = {};
   }
   return state[gid];
 }
@@ -63,15 +67,15 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Channels & Roles
 const CHANNELS = {
-  court: "⚖️motel-court-of-weirdos🧑‍⚖️",
-  lounge: "🎲the-lounge🎙️",
-  jail_sfw: "🔒the-broom-closet🧹",
-  jail_nsfw: "🤫the-no-tell-motel-room💣"
+  court: '⚖️motel-court-of-weirdos🧑‍⚖️',
+  lounge: '🎲the-lounge🎙️',
+  jail_sfw: '🔒the-broom-closet🧹',
+  jail_nsfw: '🤫the-no-tell-motel-room💣'
 };
 
 const ROLES = {
-  jail_sfw: "SFW jail",
-  jail_nsfw: "NSFW Jail"
+  jail_sfw: 'SFW jail',
+  jail_nsfw: 'NSFW Jail'
 };
 
 // Helpers
@@ -83,15 +87,70 @@ function findRole(guild, name) {
   return guild.roles.cache.find(role => role.name === name);
 }
 
+function getRecord(gState, userId) {
+  if (!gState.records) gState.records = {};
+  if (!gState.records[userId]) {
+    gState.records[userId] = {
+      totalCharges: 0,
+      totalGuilty: 0,
+      totalNotGuilty: 0,
+      totalReleases: 0,
+      cases: []
+    };
+  }
+  return gState.records[userId];
+}
+
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function formatCourtLine(template, data) {
+  return template
+    .replace(/\{case\}/g, data.case)
+    .replace(/\{user\}/g, data.user)
+    .replace(/\{cell\}/g, data.cell || '');
+}
+
+// Court flavor lines
+const COURT_GUILTY_LINES = [
+  '⚖️ **Case #{case} — GUILTY.** The neon hums disapprovingly at {user}.',
+  '⚖️ **Case #{case}:** The jury of weirdos has spoken. {user} is **GUILTY**.',
+  '⚖️ **Verdict — GUILTY (Case #{case}).** {user}, even the ice machine is judging you.'
+];
+
+const COURT_INNOCENT_LINES = [
+  '⚖️ **Case #{case} — NOT GUILTY.** The Motel begrudgingly lets {user} walk.',
+  '⚖️ **Case #{case}: ACQUITTED.** {user} slips through the cracks this time.',
+  '⚖️ **Case #{case} — FREE.** The Court of Weirdos shrugs and releases {user}.'
+];
+
+const COURT_JAIL_LINES = [
+  '🚪 **Case #{case}:** {user} is dragged into the {cell}. The door clicks shut.',
+  '🚪 **Case #{case}:** {user} steps into the {cell} like they own the place. They do not.',
+  '🚪 **Case #{case}:** {user} chose the {cell}. Bold of them to think they had a choice.'
+];
+
+const COURT_SENTENCE_LINES = [
+  '🧾 **Sentence for Case #{case}:** The Motel demands tribute from {user}.',
+  '🧾 **Case #{case} Sentencing:** {user} now owes the Motel a favor.',
+  '🧾 **Judgment for Case #{case}:** {user} has a little quest now.'
+];
+
+const COURT_RELEASE_LINES = [
+  '🕊️ **Case #{case} closed.** {user} is released back into the Motel ecosystem.',
+  '🕊️ **Case #{case}:** {user} slips out of jail, slightly haunted but technically free.',
+  '🕊️ **Release — Case #{case}.** {user} is loosed upon the halls once more.'
+];
+
 // ===============================
 // PART 1 COMPLETE — READY FOR PART 2
 // Slash command registration next
-
 // ===============================
+
 // PART 2 — Slash Commands (Guild Only) + /nominate
 // ===============================
 
-// Define slash commands
 const COMMANDS = [
   {
     name: 'nominate',
@@ -183,6 +242,18 @@ const COMMANDS = [
         required: true
       }
     ]
+  },
+  {
+    name: 'record',
+    description: "View a guest's Motel criminal record.",
+    options: [
+      {
+        type: 6,
+        name: 'user',
+        description: 'Whose record do you want to see?',
+        required: true
+      }
+    ]
   }
 ];
 
@@ -230,6 +301,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       cell: null,
       timestamps: { nominatedAt: Date.now() }
     };
+
+    const rec = getRecord(gState, target.id);
+    rec.totalCharges += 1;
+    rec.cases.push(id);
     saveState();
 
     const court = await findChannel(guild, CHANNELS.court);
@@ -240,13 +315,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const embed = {
       title: `🔒 Jail Nomination #${id}`,
       description:
-        `**Accused:** <@${target.id}>
-**Accuser:** <@${interaction.user.id}>
-
-**Crime:** ${reason}
-**Justification:** ${justification}
-
-Vote using ✅ or ❌`,
+        `**Accused:** <@${target.id}>\n` +
+        `**Accuser:** <@${interaction.user.id}>\n\n` +
+        `**Crime:** ${reason}\n` +
+        `**Justification:** ${justification}\n\n` +
+        `Vote using ✅ or ❌`,
       color: 0xffcc00,
       timestamp: new Date().toISOString()
     };
@@ -263,11 +336,7 @@ Vote using ✅ or ❌`,
 });
 
 // ===============================
-// PART 2 COMPLETE — PART 3 NEXT
-// Verdict, ChooseJail, Sentence, Release
-
-// ===============================
-// PART 3 — VERDICT, CHOOSEJAIL, SENTENCE, RELEASE
+// PART 3 — VERDICT, CHOOSEJAIL, SENTENCE, RELEASE, RECORD
 // ===============================
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -277,24 +346,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const guild = interaction.guild;
   const gState = getGuildState(guild.id);
 
-  // ===============================
-  // /verdict — Count votes & declare outcome
-  // ===============================
+  // /verdict
   if (commandName === 'verdict') {
     const caseId = interaction.options.getInteger('case', true);
     const record = gState.jail.cases[caseId];
 
     if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
-    if (record.status !== 'voting') return interaction.reply({ content: `Case #${caseId} is not in voting stage.`, ephemeral: true });
+    if (record.status !== 'voting') {
+      return interaction.reply({ content: `Case #${caseId} is not in voting stage.`, ephemeral: true });
+    }
 
     const court = await findChannel(guild, CHANNELS.court);
-    if (!court) return interaction.reply({ content: `Court channel not found.`, ephemeral: true });
+    if (!court) return interaction.reply({ content: 'Court channel not found.', ephemeral: true });
 
     let nominationMsg;
     try {
       nominationMsg = await court.messages.fetch(record.messageId);
     } catch {
-      return interaction.reply({ content: `Could not fetch original nomination message.`, ephemeral: true });
+      return interaction.reply({ content: 'Could not fetch original nomination message.', ephemeral: true });
     }
 
     const reactions = nominationMsg.reactions.cache;
@@ -305,59 +374,73 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const noVotes = Math.max(no - 1, 0);
 
     const lounge = await findChannel(guild, CHANNELS.lounge);
+    const accusedTag = `<@${record.nomineeId}>`;
+    const accusedName = guild.members.cache.get(record.nomineeId)?.user.username || 'the accused';
 
     if (yesVotes > noVotes) {
       record.status = 'guilty';
+      const rec = getRecord(gState, record.nomineeId);
+      rec.totalGuilty += 1;
       saveState();
 
       if (lounge) {
         await lounge.send(
-          `🚨 **Verdict for Case #${caseId}: GUILTY**
-` +
-          `<@${record.nomineeId}> has been convicted.
-` +
-          `Proceed to the court to choose your jail cell.`
+          '🚨 Verdict for Case #' + caseId + ': GUILTY.\n' +
+          accusedName + ' has been convicted.\n' +
+          'Proceed to the court to choose your jail cell.'
         );
       }
 
-      await court.send(
-        `⚖️ **Case #${caseId} — GUILTY**
-` +
-        `Crime: ${record.reason}
-` +
-        `Justification: ${record.justification}
+      const guiltyLine = formatCourtLine(
+        pick(COURT_GUILTY_LINES),
+        { case: caseId, user: accusedTag }
+      );
 
-` +
-        `<@${record.nomineeId}> — please choose your jail using:
-` +
+      await court.send(
+        guiltyLine + '\n' +
+        'Crime: ' + record.reason + '\n' +
+        'Justification: ' + record.justification + '\n\n' +
+        accusedTag + ' — please choose your jail using:\n' +
         'Use the commands: /choosejail case:' + caseId + ' cell:sfw  OR  /choosejail case:' + caseId + ' cell:nsfw'
       );
 
-      return interaction.reply({ content: `Guilty verdict recorded.`, ephemeral: true });
+      return interaction.reply({ content: 'Guilty verdict recorded.', ephemeral: true });
     }
 
     // Innocent
     record.status = 'innocent';
+    const rec = getRecord(gState, record.nomineeId);
+    rec.totalNotGuilty += 1;
     saveState();
 
-    if (lounge) await lounge.send(`🕊️ **Case #${caseId} — NOT GUILTY.** The Motel Court has spoken.`);
-    await court.send(`⚖️ **Case #${caseId}: NOT GUILTY.** They walk free.`);
+    if (lounge) {
+      await lounge.send(
+        '🕊️ Case #' + caseId + ' — NOT GUILTY. The Motel Court has spoken.\n' +
+        accusedName + ' walks free this time.'
+      );
+    }
 
-    return interaction.reply({ content: `Not guilty verdict recorded.`, ephemeral: true });
+    const innocentLine = formatCourtLine(
+      pick(COURT_INNOCENT_LINES),
+      { case: caseId, user: accusedTag }
+    );
+
+    await court.send(innocentLine);
+
+    return interaction.reply({ content: 'Not guilty verdict recorded.', ephemeral: true });
   }
 
-  // ===============================
-  // /choosejail — convicted user selects SFW/NSFW
-  // ===============================
+  // /choosejail
   if (commandName === 'choosejail') {
     const caseId = interaction.options.getInteger('case', true);
     const cell = interaction.options.getString('cell', true);
     const record = gState.jail.cases[caseId];
 
     if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
-    if (record.status !== 'guilty') return interaction.reply({ content: `Case #${caseId} is not awaiting jail selection.`, ephemeral: true });
+    if (record.status !== 'guilty') {
+      return interaction.reply({ content: `Case #${caseId} is not awaiting jail selection.`, ephemeral: true });
+    }
 
-    // Only the nominated user can choose their jail
     if (interaction.user.id !== record.nomineeId) {
       return interaction.reply({ content: `Only <@${record.nomineeId}> may choose their jail.`, ephemeral: true });
     }
@@ -377,33 +460,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const court = await findChannel(guild, CHANNELS.court);
     const lounge = await findChannel(guild, CHANNELS.lounge);
 
+    const accusedTag = `<@${record.nomineeId}>`;
+    const accusedName = guild.members.cache.get(record.nomineeId)?.user.username || 'the accused';
+    const cellLabel = cell === 'sfw' ? 'SFW Jail' : 'NSFW Jail';
+
     if (court) {
-      await court.send(
-        `🚪 **Case #${caseId}: <@${record.nomineeId}> has entered the ${cell === 'sfw' ? 'SFW' : 'NSFW'} Jail.**
-` +
-        `Punishment suggestions may now begin!`
+      const jailLine = formatCourtLine(
+        pick(COURT_JAIL_LINES),
+        { case: caseId, user: accusedTag, cell: cellLabel }
       );
+      await court.send(jailLine + '\nPunishment suggestions may now begin!');
     }
 
     if (lounge) {
       await lounge.send(
-        `🔒 <@${record.nomineeId}> is now in the **${cell === 'sfw' ? 'SFW Jail' : 'NSFW Jail'}** for Case #${caseId}.`
+        '🔒 ' + accusedName + ' is now in the **' + cellLabel +
+        '** for Case #' + caseId + '.'
       );
     }
 
-    return interaction.reply({ content: `Jail chosen.`, ephemeral: true });
+    return interaction.reply({ content: 'Jail chosen.', ephemeral: true });
   }
 
-  // ===============================
-  // /sentence — mods assign punishment
-  // ===============================
+  // /sentence
   if (commandName === 'sentence') {
     const caseId = interaction.options.getInteger('case', true);
     const punishment = interaction.options.getString('punishment', true);
     const record = gState.jail.cases[caseId];
 
     if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
-    if (record.status !== 'jailed') return interaction.reply({ content: `Case #${caseId} is not in sentencing stage.`, ephemeral: true });
+    if (record.status !== 'jailed') {
+      return interaction.reply({ content: `Case #${caseId} is not in sentencing stage.`, ephemeral: true });
+    }
 
     record.punishment = punishment;
     record.status = 'awaiting_punishment';
@@ -413,32 +501,39 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const court = await findChannel(guild, CHANNELS.court);
     const lounge = await findChannel(guild, CHANNELS.lounge);
 
+    const accusedTag = `<@${record.nomineeId}>`;
+    const accusedName = guild.members.cache.get(record.nomineeId)?.user.username || 'the accused';
+
+    const sentenceLine = formatCourtLine(
+      pick(COURT_SENTENCE_LINES),
+      { case: caseId, user: accusedTag }
+    );
+
     if (court) {
       await court.send(
-        `🧾 **Sentence for Case #${caseId}:**
-` +
-        `<@${record.nomineeId}> must:
-> ${punishment}`
+        sentenceLine + '\n' +
+        accusedTag + ' must:\n> ' + punishment
       );
     }
 
     if (lounge) {
       await lounge.send(
-        `🔨 <@${record.nomineeId}> has been officially sentenced for Case #${caseId}.`);
+        '🔨 ' + accusedName + ' has been officially sentenced for Case #' + caseId + '.'
+      );
     }
 
-    return interaction.reply({ content: `Punishment set.`, ephemeral: true });
+    return interaction.reply({ content: 'Punishment set.', ephemeral: true });
   }
 
-  // ===============================
-  // /release — free the jailed user
-  // ===============================
+  // /release
   if (commandName === 'release') {
     const caseId = interaction.options.getInteger('case', true);
     const record = gState.jail.cases[caseId];
 
     if (!record) return interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
-    if (record.status !== 'awaiting_punishment') return interaction.reply({ content: `Case #${caseId} is not ready for release.`, ephemeral: true });
+    if (record.status !== 'awaiting_punishment') {
+      return interaction.reply({ content: `Case #${caseId} is not ready for release.`, ephemeral: true });
+    }
 
     const cell = record.cell;
     const roleName = cell === 'sfw' ? ROLES.jail_sfw : ROLES.jail_nsfw;
@@ -450,32 +545,69 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     record.status = 'released';
     record.timestamps.releasedAt = Date.now();
+
+    const rec = getRecord(gState, record.nomineeId);
+    rec.totalReleases += 1;
     saveState();
 
     const court = await findChannel(guild, CHANNELS.court);
     const lounge = await findChannel(guild, CHANNELS.lounge);
 
-    if (court) await court.send(`🕊️ **Case #${caseId} is now closed. <@${record.nomineeId}> has been released.**`);
-    if (lounge) await lounge.send(`🕊️ <@${record.nomineeId}> has completed their sentence for Case #${caseId}.`);
+    const accusedTag = `<@${record.nomineeId}>`;
+    const accusedName = guild.members.cache.get(record.nomineeId)?.user.username || 'the accused';
 
-    return interaction.reply({ content: `User released.`, ephemeral: true });
+    if (court) {
+      const releaseLine = formatCourtLine(
+        pick(COURT_RELEASE_LINES),
+        { case: caseId, user: accusedTag }
+      );
+      await court.send(releaseLine);
+    }
+
+    if (lounge) {
+      await lounge.send(
+        '🕊️ ' + accusedName + ' has completed their sentence for Case #' + caseId + '.'
+      );
+    }
+
+    return interaction.reply({ content: 'User released.', ephemeral: true });
+  }
+
+  // /record
+  if (commandName === 'record') {
+    const target = interaction.options.getUser('user', true);
+    const rec = gState.records && gState.records[target.id];
+
+    if (!rec) {
+      return interaction.reply({
+        content: `${target.username} has a clean Motel record... for now.`,
+        ephemeral: true
+      });
+    }
+
+    const lines = [
+      `📂 **Motel Criminal Record for ${target.username}**`,
+      '',
+      `Total charges: **${rec.totalCharges || 0}**`,
+      `Total guilty verdicts: **${rec.totalGuilty || 0}**`,
+      `Total not guilty: **${rec.totalNotGuilty || 0}**`,
+      `Total releases: **${rec.totalReleases || 0}**`,
+      '',
+      `Cases involved: ${rec.cases && rec.cases.length ? '#' + rec.cases.join(', #') : 'none'}`
+    ];
+
+    return interaction.reply({
+      content: lines.join('\n'),
+      ephemeral: true
+    });
   }
 });
-
-// ===============================
-// PART 3 COMPLETE — PART 4 NEXT
-// Ambient, AI personality, transcripts, summarizer
-// ===============================
-// ===============================
-// ===============================
 
 // ===============================
 // PART 4 — CHAD PERSONALITY ENGINE + TRANSCRIPTS + AMBIENT
 // ===============================
 
-// -------------------------------
 // TRANSCRIPT LOGGING
-// -------------------------------
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
@@ -488,103 +620,94 @@ client.on(Events.MessageCreate, async (msg) => {
     ts: Date.now()
   });
 
-  if (gState.transcripts[msg.channel.id].length > 200) gState.transcripts[msg.channel.id].shift();
+  if (gState.transcripts[msg.channel.id].length > 200) {
+    gState.transcripts[msg.channel.id].shift();
+  }
   saveState();
 });
 
-// -------------------------------
 // SUMMARIZER — "Chad, summarize"
-// -------------------------------
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
-  if (!msg.content.toLowerCase().startsWith("chad, summarize")) return;
+  if (!msg.content.toLowerCase().startsWith('chad, summarize')) return;
 
   const gState = getGuildState(msg.guild.id);
   const transcript = gState.transcripts[msg.channel.id] || [];
 
   if (transcript.length === 0) return msg.reply("There's nothing to summarize, sunshine.");
 
-  const formatted = transcript.map(t => `<@${t.user}>: ${t.content}`).join(" ");
+  const formatted = transcript.map(t => `<@${t.user}>: ${t.content}`).join(' ');
 
   try {
     const summary = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: 'gpt-4o-mini',
       messages: [
-        { role: "system", content: "You are Chad — confident, sarcastic, flirtatious. Summarize with swagger." },
-        { role: "user", content: formatted }
+        { role: 'system', content: 'You are Chad — confident, sarcastic, flirtatious. Summarize with swagger.' },
+        { role: 'user', content: formatted }
       ]
     });
     msg.reply(summary.choices[0].message.content);
   } catch (err) {
     console.error(err);
-    msg.reply("My bad, princess — the spirits glitched.");
+    msg.reply('My bad, princess — the spirits glitched.');
   }
 });
 
-// -------------------------------
 // CHAD PERSONALITY WEIGHTING
-// -------------------------------
 function chadTone() {
   const r = Math.random();
-  if (r < 0.30) return "snark";      // 30% snark
-  if (r < 0.50) return "haunt";      // 20% haunting
-  return "chad";                     // 50% confident Chad
+  if (r < 0.30) return 'snark';
+  if (r < 0.50) return 'haunt';
+  return 'chad';
 }
 
 function chadLine(tone) {
-  if (tone === "snark") {
+  if (tone === 'snark') {
     return brain.petty[Math.floor(Math.random() * brain.petty.length)] || "You're adorable when you're wrong.";
   }
-  if (tone === "haunt") {
-    return brain.ambient[Math.floor(Math.random() * brain.ambient.length)] || "The halls whisper about you, doll.";
+  if (tone === 'haunt') {
+    return brain.ambient[Math.floor(Math.random() * brain.ambient.length)] || 'The halls whisper about you, doll.';
   }
-  return brain.normal[Math.floor(Math.random() * brain.normal.length)] || "Relax — Chad’s here.";
+  return brain.normal[Math.floor(Math.random() * brain.normal.length)] || 'Relax — Chad’s here.';
 }
 
-// -------------------------------
 // MAIN CHAT HANDLER — "Chad ..."
-// -------------------------------
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
-  const content = msg.content.toLowerCase();
-  if (!content.startsWith("chad")) return;
+  const content = msg.content.trim().toLowerCase();
+  if (!content.startsWith('chad')) return;
 
   const tone = chadTone();
   const vibe = chadLine(tone);
 
   try {
     const reply = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: 'gpt-4o-mini',
       messages: [
-        { role: "system", content: "You are CHAD — 6'4 of arrogant charm, chaotic flirt energy, confident, spooky at times, never apologetic unless sarcastic." },
-        { role: "user", content: msg.content },
-        { role: "assistant", content: vibe }
+        { role: 'system', content: "You are CHAD — 6'4 of arrogant charm, chaotic flirt energy, confident, spooky at times, never apologetic unless sarcastic." },
+        { role: 'user', content: msg.content },
+        { role: 'assistant', content: vibe }
       ]
     });
 
     msg.reply(reply.choices[0].message.content);
   } catch (err) {
     console.error(err);
-    msg.reply("The lights flickered too hard — try again, sweetheart.");
+    msg.reply('The lights flickered too hard — try again, sweetheart.');
   }
 });
 
-// -------------------------------
 // AMBIENT HAUNTINGS — Every 3 hours
-// -------------------------------
 setInterval(() => {
-  const line = brain.ambient[Math.floor(Math.random() * brain.ambient.length)] || "Something’s breathing behind the vending machine again.";
+  const line = brain.ambient[Math.floor(Math.random() * brain.ambient.length)] ||
+    'Something’s breathing behind the vending machine again.';
 
   client.guilds.cache.forEach(async (guild) => {
     const lounge = guild.channels.cache.find(ch => ch.name === CHANNELS.lounge);
     if (lounge) lounge.send(`🕯️ ${line}`);
   });
 }, 3 * 60 * 60 * 1000);
-
-// ===============================
-// PART 4 COMPLETE — FINAL LOGIN NEXT
-// ===============================
 
 // ===============================
 // PART 5 — FINAL LOGIN
@@ -602,4 +725,3 @@ client.login(process.env.DISCORD_TOKEN).then(() => {
 // ===============================
 // CHAD 2.0 — COMPLETE
 // ===============================
-
