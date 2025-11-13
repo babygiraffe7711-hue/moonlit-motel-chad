@@ -504,8 +504,7 @@ client.on(Events.MessageCreate, async (msg) => {
 
   if (transcript.length === 0) return msg.reply("There's nothing to summarize, sunshine.");
 
-  const formatted = transcript.map(t => `<@${t.user}>: ${t.content}`).join(" ")("
-");
+  const formatted = transcript.map(t => `<@${t.user}>: ${t.content}`).join(" ");
 
   try {
     const summary = await openai.chat.completions.create({
