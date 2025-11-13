@@ -330,7 +330,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 ` +
         `<@${record.nomineeId}> — please choose your jail using:
 ` +
-        ``/choosejail case:${caseId} cell:sfw`` or ``/choosejail case:${caseId} cell:nsfw```
+        ``/choosejail case:${caseId} cell:sfw` or `/choosejail case:${caseId} cell:nsfw``
       );
 
       return interaction.reply({ content: `Guilty verdict recorded.`, ephemeral: true });
@@ -587,7 +587,6 @@ setInterval(() => {
 // PART 4 COMPLETE — FINAL LOGIN NEXT
 // ===============================
 
-
 // ===============================
 // PART 5 — FINAL LOGIN
 // ===============================
@@ -604,3 +603,4 @@ client.login(process.env.DISCORD_TOKEN).then(() => {
 // ===============================
 // CHAD 2.0 — COMPLETE
 // ===============================
+
