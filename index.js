@@ -330,7 +330,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 ` +
         `<@${record.nomineeId}> — please choose your jail using:
 ` +
-        /choosejail case:${caseId} cell:sfw  OR  /choosejail case:${caseId} cell:nsfw
+        'Use the commands: /choosejail case:' + caseId + ' cell:sfw  OR  /choosejail case:' + caseId + ' cell:nsfw'
       );
 
       return interaction.reply({ content: `Guilty verdict recorded.`, ephemeral: true });
