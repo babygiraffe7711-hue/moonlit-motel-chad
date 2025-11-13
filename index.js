@@ -859,7 +859,7 @@ function chadLine(tone) {
   return brain.normal[Math.floor(Math.random() * brain.normal.length)] || 'Relax — Chad’s here.';
 }
 
-// MAIN CHAT HANDLER — global "Chad" / ping trigger
+// MAIN CHAT HANDLER — global "Chad" / ping trigger + chocolate egg
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
@@ -869,13 +869,37 @@ client.on(Events.MessageCreate, async (msg) => {
   // Let the dedicated summarizer handler own this phrase
   if (lower.startsWith('chad, summarize')) return;
 
+  // 🍫 CHOCOLATE EASTER EGG
+  // Examples:
+  // "chad, i like chocolate"
+  // "chad, i liek chocolate"
+  // "chad give me chocolate"
+  // "chad i want chocolate"
+  const chocolatePattern = /\bchad\b.*\b(i\s*liek|i\s*like|i\s*want|give\s+me)\b.*\bchocolate\b/;
+  if (chocolatePattern.test(lower)) {
+    try {
+      await msg.author.send('🍫');
+    } catch (err) {
+      console.error('Could not DM chocolate:', err);
+      // Fallback if DMs are closed
+      await msg.reply("Tried to slip chocolate into your DMs, but your door's locked, sweetheart. 🍫");
+    }
+    return; // Don't also do the normal AI reply for this easter egg trigger
+  }
+
   // Trigger conditions:
   // 1) Direct @mention of Chad
   // 2) The standalone word "chad" appears anywhere in the message (any case)
+  // 3) Message starts with "chad" (covers "chad, are you alive", etc.)
   const mentionedByPing = msg.mentions.has(client.user);
   const mentionedByName = /\bchad\b/i.test(rawContent);
+  const startsWithChad = lower.startsWith('chad');
 
-  if (!mentionedByPing && !mentionedByName) return;
+  if (!mentionedByPing && !mentionedByName && !startsWithChad) return;
+
+  console.log(
+    `[ChadTrigger] #${msg.channel?.name || 'unknown'} (${msg.channelId}) — ${rawContent}`
+  );
 
   const tone = chadTone();
   const vibe = chadLine(tone);
