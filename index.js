@@ -19,8 +19,8 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 
-// Node 18+ has global fetch. If not, you can uncomment the following and
-// install node-fetch: npm install node-fetch
+// Node 18+ has global fetch. If your runtime is older, install node-fetch
+// and uncomment this line:
 // const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // Load brain.json personality & lore
@@ -675,7 +675,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // /casearticle — newspaper-style writeup with quotes from court chat
   if (commandName === 'casearticle') {
-    // NOTE: public for the whole motel — no flags here
     await interaction.deferReply();
 
     const caseId = interaction.options.getInteger('case', true);
@@ -705,7 +704,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       `Chosen cell: ${cellLabel}\n` +
       `Punishment: ${punishmentText}\n`;
 
-    // Pull quotes from Court of Weirdos transcript
     let quoteBlock = 'No notable quotes were captured for this case.';
     try {
       const court = await findChannel(guild, CHANNELS.court);
@@ -713,10 +711,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const transcript = gState.transcripts[court.id] || [];
         const startTime = record.timestamps?.nominatedAt || 0;
 
-        // Only messages after nomination
         let relevant = transcript.filter(m => m.ts >= startTime);
 
-        // Basic filters: length & non-empty
         relevant = relevant.filter(m => {
           const content = (m.content || '').trim();
           return content.length >= 5 && content.length <= 200;
@@ -753,7 +749,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     } catch (err) {
       console.error('Error collecting case quotes:', err);
-      // keep default quoteBlock
     }
 
     try {
@@ -764,8 +759,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             role: 'system',
             content:
               'You are Chad writing a dramatic, tongue-in-cheek motel newspaper article ' +
-              'about a court case at the Moonlit Motel. Write 2–4 short paragraphs, maximum 300 words. ' +
-              'Lean into noir / tabloid drama, but keep it playful and safe for a Discord community.'
+              'about a court case at the Moonlit Motel. Write 2–4 short paragraphs, maximum 300 words.'
           },
           {
             role: 'user',
@@ -865,7 +859,6 @@ function chadLine(tone) {
 
 // ========= WEATHER & TIME HELPERS =========
 
-// Basic mapping of Open-Meteo weather codes to text
 const WEATHER_CODES = {
   0: 'clear sky',
   1: 'mainly clear',
@@ -932,8 +925,8 @@ async function getWeatherSummary(locationRaw) {
 
     const cw = data.current_weather;
     const desc = WEATHER_CODES[cw.weathercode] || 'mysterious conditions';
-    const temp = cw.temperature; // °C
-    const wind = cw.windspeed; // km/h
+    const temp = cw.temperature;
+    const wind = cw.windspeed;
 
     return `In **${loc.name}${loc.country ? ', ' + loc.country : ''}** it's **${temp}°C** with **${desc}**, wind around **${wind} km/h**.`;
   } catch (err) {
@@ -995,7 +988,6 @@ client.on(Events.MessageCreate, async (msg) => {
   }
 
   // 🌦️ WEATHER INTENT
-  // e.g. "chad, what's the weather in paris", "chad what's the weather like in tokyo"
   let weatherMatch = null;
   if (lower.includes('weather') && lower.includes(' in ')) {
     weatherMatch =
@@ -1013,7 +1005,6 @@ client.on(Events.MessageCreate, async (msg) => {
   }
 
   // ⏰ TIME INTENT
-  // e.g. "chad, what's the time in london", "chad what time is it in sydney"
   let timeMatch = null;
   if (lower.includes('time') && lower.includes(' in ')) {
     timeMatch =
@@ -1033,12 +1024,10 @@ client.on(Events.MessageCreate, async (msg) => {
   // Trigger conditions for general AI chat:
   // 1) Direct @mention of Chad
   // 2) The standalone word "chad" appears anywhere
-  // 3) Message starts with "chad"
   const mentionedByPing = msg.mentions.has(client.user);
-  const mentionedByName = /\bchad\b/i.test(rawContent);
-  const startsWithChad = lower.startsWith('chad');
+  const hasChadWord = /\bchad\b/i.test(rawContent);
 
-  if (!mentionedByPing && !mentionedByName && !startsWithChad) return;
+  if (!mentionedByPing && !hasChadWord) return;
 
   console.log(
     `[ChadTrigger] #${msg.channel?.name || 'unknown'} (${msg.channelId}) — ${rawContent}`
