@@ -254,6 +254,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const court = await findChannel(interaction.guild, CHANNELS.court);
     if (!court) {
       await interaction.reply({ content: `Court channel not found: ${CHANNELS.court}`, ephemeral: true });
+  }
+});
+
+// ===============================
+// PART 4 — EXISTING CHAD FEATURES (Lore, AI Replies, Ambient, Summaries)
+// ===============================);
       return;
     }
 
