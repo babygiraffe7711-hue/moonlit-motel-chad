@@ -271,11 +271,12 @@ const COMMANDS = [
 ];
 
 // Register slash commands on ready (guild-only for instant load)
-client.once('ready', async () => {
-  console.log(`Logged in as ${client.user.tag}`);
+// FUTURE-PROOF: use Events.ClientReady instead of "ready"
+client.once(Events.ClientReady, async (c) => {
+  console.log(`Logged in as ${c.user.tag}`);
 
   try {
-    const guild = await client.guilds.fetch('1432692253897265244');
+    const guild = await c.guilds.fetch('1432692253897265244');
     await guild.commands.set(COMMANDS);
     console.log('Guild-only slash commands registered.');
   } catch (err) {
@@ -671,8 +672,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // /casearticle — newspaper-style writeup with quotes from court chat
   if (commandName === 'casearticle') {
-    // Defer immediately so Discord doesn't time out
-    await interaction.deferReply({ flags: 64 });
+    // NOTE: public for the whole motel — no flags here
+    await interaction.deferReply();
 
     const caseId = interaction.options.getInteger('case', true);
     const record = gState.jail.cases[caseId];
