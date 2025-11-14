@@ -22,9 +22,6 @@ const OpenAI = require('openai');
 // 🧾 Guestbook (per-guest memory)
 const { touchGuest, getGuest } = require('./guestbook');
 
-// If your Node version < 18, uncomment and install node-fetch.
-// const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
 // Load brain.json personality & lore
 const brain = require('./brain.json');
 
@@ -48,7 +45,8 @@ function getGuildState(gid) {
       transcripts: {},
       prefs: {},
       records: {}, // criminal records per user
-      mystery: { currentStage: 0 }
+      mystery: { currentStage: 0 },
+      interactions: {} // 💬 per-user interactions with Chad
     };
     saveState();
   }
@@ -57,6 +55,9 @@ function getGuildState(gid) {
   }
   if (!state[gid].mystery) {
     state[gid].mystery = { currentStage: 0 };
+  }
+  if (!state[gid].interactions) {
+    state[gid].interactions = {};
   }
   return state[gid];
 }
@@ -155,6 +156,14 @@ const COURT_RELEASE_LINES = [
   '🕊️ **Case #{case} closed.** {user} is released back into the Motel ecosystem.',
   '🕊️ **Case #{case}:** {user} slips out of jail, slightly haunted but technically free.',
   '🕊️ **Release — Case #{case}.** {user} is loosed upon the halls once more.'
+];
+
+// 💋 First-time flirt lines when a guest talks to Chad for the very first time
+const FIRST_TIME_FLIRTS = [
+  "Oh, first time my name’s crossed your lips, {user}? Took you long enough.",
+  "So this is our first official conversation, {user}. I expected fireworks, but your typing will do.",
+  "First time you’ve summoned me, {user}. Careful — I remember my favourites.",
+  "Ah, a fresh voice saying my name. Hi, {user}. I’ll try not to haunt you. Too much."
 ];
 
 // ===============================
@@ -815,14 +824,11 @@ client.on(Events.MessageCreate, async (msg) => {
 
   // 📝 GUESTBOOK: track everyone who speaks
   try {
-    const { guest, isNew } = touchGuest(msg.member || msg.author);
+    const { guest } = touchGuest(msg.member || msg.author);
 
     if (guest) {
-      if (isNew) {
-        await msg.channel.send(
-          `🔔 new check-in detected: **${guest.name}** just walked into the Moonlit Motel.`
-        );
-      } else if (guest.messageCount === 50) {
+      // no "new check-in detected" spam — just milestones
+      if (guest.messageCount === 50) {
         await msg.channel.send(
           `🏨 **${guest.name}** has crossed **50** messages. certified Motel regular.`
         );
@@ -1075,44 +1081,102 @@ function handleStages(lower, msg, gState) {
   return false;
 }
 
-// MAIN CHAT HANDLER — requires messages to start with "chad" or @Chad
+// MAIN CHAT HANDLER — global "Chad" / ping trigger + all extras
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
   try {
     const rawContent = msg.content || '';
-
-    // Normalize leading @Chad mention to "chad"
-    const botId = client.user.id;
-    const mentionRegex = new RegExp(`^<@!?${botId}>`);
-    let normalized = rawContent;
-
-    if (mentionRegex.test(normalized)) {
-      normalized = normalized.replace(mentionRegex, 'chad').trimStart();
-    }
-
-    const lower = normalized.toLowerCase().trim();
+    const lower = rawContent.toLowerCase().trim();
 
     // Let the dedicated summarizer handler own this phrase
     if (lower.startsWith('chad, summarize')) return;
 
     const gState = getGuildState(msg.guild.id);
 
-    // NEW: only respond if message starts with "chad" or starts with @Chad
-    const startsWithChad =
-      lower.startsWith('chad,') ||
-      lower.startsWith('chad ') ||
-      lower === 'chad';
+    // ✅ NEW TRIGGER RULES:
+    // Only respond if:
+    // - Message starts with "chad" (e.g. "chad, roast me")
+    // - OR starts with @Chad mention
+    // - OR is a direct reply to one of Chad's messages
+    const trimmed = rawContent.trim();
 
-    const startsWithMention = mentionRegex.test(rawContent);
+    const startsWithChadWord = /^chad\b/.test(lower);
+    const startsWithMention =
+      trimmed.startsWith(`<@${client.user.id}>`) ||
+      trimmed.startsWith(`<@!${client.user.id}>`);
 
-    if (!startsWithChad && !startsWithMention) return;
+    let isReplyToChad = false;
+    if (msg.reference?.messageId) {
+      try {
+        const repliedTo = await msg.channel.messages.fetch(msg.reference.messageId);
+        if (repliedTo.author.id === client.user.id) {
+          isReplyToChad = true;
+        }
+      } catch (err) {
+        console.error('Error checking reply-to-Chad:', err);
+      }
+    }
+
+    if (!startsWithChadWord && !startsWithMention && !isReplyToChad) return;
 
     const inBasement = msg.channel?.parentId === BASEMENT_CATEGORY_ID;
 
     console.log(
       `[ChadTrigger] ${inBasement ? '[BASEMENT]' : ''} #${msg.channel?.name || 'unknown'} (${msg.channel?.id}) — ${rawContent}`
     );
+
+    // 💾 INTERACTION TRACKING (per-user, per-guild)
+    if (!gState.interactions) gState.interactions = {};
+    if (!gState.interactions[msg.author.id]) {
+      gState.interactions[msg.author.id] = {
+        count: 0,
+        firstAt: null,
+        lastAt: null
+      };
+    }
+    const stats = gState.interactions[msg.author.id];
+    const isFirstInteractionEver = stats.count === 0;
+
+    stats.count += 1;
+    stats.lastAt = Date.now();
+    if (!stats.firstAt) {
+      stats.firstAt = stats.lastAt;
+    }
+    saveState();
+
+    const displayNameNice =
+      msg.member?.displayName ||
+      msg.author.username ||
+      'you';
+
+    // If it’s the very first time they’ve ever talked to Chad, send a one-time flirty intro
+    if (isFirstInteractionEver) {
+      const firstLineTemplate = pick(FIRST_TIME_FLIRTS) || "First time saying my name, {user}? Cute.";
+      const firstLine = firstLineTemplate.replace(/\{user\}/g, displayNameNice);
+      await msg.reply(firstLine);
+      // We *don’t* return here: we still let their original request be processed below
+    }
+
+    // 💬 Special "Do you know who I am?" handler using interaction count
+    const asksWhoAmI = /do\s+you\s+know\s+who\s+i\s+am\??/i.test(lower);
+    if (asksWhoAmI) {
+      const count = stats.count || 0;
+
+      let line;
+      if (count <= 1) {
+        line = "Barely, sweetheart. This is literally our first real message together.";
+      } else if (count < 5) {
+        line = `We’ve only traded **${count}** messages since you first said my name. I’m intrigued, not committed.`;
+      } else if (count < 15) {
+        line = `We’ve sent **${count}** messages back and forth. I know your vibe — chaotic, but in a way I approve of.`;
+      } else {
+        line = `Oh, I know you. We’ve tangled through **${count}** messages already. The Motel keeps receipts.`;
+      }
+
+      await msg.reply(line);
+      return;
+    }
 
     // 💡 HINT HANDLER FOR MYSTERY
     if (
@@ -1204,7 +1268,7 @@ client.on(Events.MessageCreate, async (msg) => {
 
     // 🏨 "ask the motel" — lore-flavoured answer
     if (lower.startsWith('chad, ask the motel')) {
-      const question = normalized.split(/ask the motel/i)[1]?.trim() || 'What is this place?';
+      const question = rawContent.split(/ask the motel/i)[1]?.trim() || 'What is this place?';
 
       const loreBits = [
         brain.lore?.title,
@@ -1277,6 +1341,7 @@ client.on(Events.MessageCreate, async (msg) => {
       username.includes('tepidtreachery') ||          // catches tepidtreachery, tepidtreachery., etc.
       displayName.includes('tepidtreachery') ||       // if your nickname has it
       displayName.includes("chad's mom");             // if you name yourself that in server
+
 
     // GENERAL CHAD RESPONSE
     const tone = chadTone();
