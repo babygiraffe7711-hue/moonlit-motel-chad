@@ -44,12 +44,16 @@ function getGuildState(gid) {
       jail: { lastId: 0, cases: {} },
       transcripts: {},
       prefs: {},
-      records: {} // criminal records per user
+      records: {}, // criminal records per user
+      mystery: { currentStage: 0 }
     };
     saveState();
   }
   if (!state[gid].records) {
     state[gid].records = {};
+  }
+  if (!state[gid].mystery) {
+    state[gid].mystery = { currentStage: 0 };
   }
   return state[gid];
 }
@@ -880,7 +884,6 @@ function chadLine(tone) {
 
 // ========= WEATHER & TIME HELPERS =========
 
-// Basic mapping of Open-Meteo weather codes to text
 const WEATHER_CODES = {
   0: 'clear sky',
   1: 'mainly clear',
@@ -1015,7 +1018,7 @@ function handleConfiguredEasterEgg(lower, msg) {
   return false;
 }
 
-function handleStages(lower, msg) {
+function handleStages(lower, msg, gState) {
   if (!Array.isArray(brain.stages)) return false;
 
   for (const stage of brain.stages) {
@@ -1030,6 +1033,12 @@ function handleStages(lower, msg) {
       if (re.test(lower)) {
         const text = stage.response || '…something shifts in the motel walls.';
         msg.reply(text);
+
+        // track current stage for hints
+        if (!gState.mystery) gState.mystery = { currentStage: 0 };
+        gState.mystery.currentStage = stage.number || 0;
+        saveState();
+
         return true;
       }
     }
@@ -1048,6 +1057,8 @@ client.on(Events.MessageCreate, async (msg) => {
     // Let the dedicated summarizer handler own this phrase
     if (lower.startsWith('chad, summarize')) return;
 
+    const gState = getGuildState(msg.guild.id);
+
     // If the message doesn't even contain "chad" anywhere and doesn't ping him, bail.
     const mentionedByPing = msg.mentions.has(client.user);
     const hasChadText = lower.includes('chad');
@@ -1057,6 +1068,40 @@ client.on(Events.MessageCreate, async (msg) => {
     console.log(
       `[ChadTrigger] from ${msg.author.tag} in #${msg.channel?.name || 'unknown'}: ${rawContent}`
     );
+
+    // 💡 HINT HANDLER FOR MYSTERY
+    if (
+      lower === 'chad, hint' ||
+      lower.startsWith('chad, hint ') ||
+      lower.startsWith('chad, give me a hint') ||
+      lower.startsWith('chad, gimme a hint')
+    ) {
+      const mState = gState.mystery || { currentStage: 0 };
+      const currentNum = mState.currentStage || 0;
+
+      if (!currentNum) {
+        await msg.reply(
+          "You haven't even knocked on the mystery door yet, doll. Try asking: `chad, what's wrong with the motel?`"
+        );
+        return;
+      }
+
+      const stage =
+        (Array.isArray(brain.stages) &&
+          brain.stages.find(s => s.number === currentNum)) ||
+        null;
+
+      if (!stage || !Array.isArray(stage.hints) || !stage.hints.length) {
+        await msg.reply(
+          "No coded hints for this part — just feel it out. The Motel likes improvisers."
+        );
+        return;
+      }
+
+      const hint = pick(stage.hints) || "The Motel stares back, unhelpfully.";
+      await msg.reply(`🕵️ Hint: ${hint}`);
+      return;
+    }
 
     // 🍫 CHOCOLATE EASTER EGG
     const chocolatePattern =
@@ -1076,8 +1121,8 @@ client.on(Events.MessageCreate, async (msg) => {
     // 🔑 CONFIGURED EASTER EGGS (brain.easter_eggs)
     if (handleConfiguredEasterEgg(lower, msg)) return;
 
-    // 🔑 STAGE / ARG TRIGGERS (simple version: just respond with stage.response)
-    if (handleStages(lower, msg)) return;
+    // 🔑 STAGE / ARG TRIGGERS
+    if (handleStages(lower, msg, gState)) return;
 
     // 🎱 RANDOM FACT
     if (lower.startsWith('chad, random fact')) {
