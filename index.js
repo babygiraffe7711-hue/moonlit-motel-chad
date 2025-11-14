@@ -19,6 +19,9 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 
+// 🧾 Guestbook (per-guest memory)
+const { touchGuest, getGuest } = require('./guestbook');
+
 // If your Node version < 18, uncomment and install node-fetch.
 // const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
@@ -806,9 +809,32 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // PART 4 — CHAD PERSONALITY ENGINE + TRANSCRIPTS + AMBIENT
 // ===============================
 
-// TRANSCRIPT LOGGING
+// TRANSCRIPT LOGGING + GUESTBOOK
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
+
+  // 📝 GUESTBOOK: track everyone who speaks
+  try {
+    const { guest, isNew } = touchGuest(msg.member || msg.author);
+
+    if (guest) {
+      if (isNew) {
+        await msg.channel.send(
+          `🔔 new check-in detected: **${guest.name}** just walked into the Moonlit Motel.`
+        );
+      } else if (guest.messageCount === 50) {
+        await msg.channel.send(
+          `🏨 **${guest.name}** has crossed **50** messages. certified Motel regular.`
+        );
+      } else if (guest.messageCount === 200) {
+        await msg.channel.send(
+          `🌕 **${guest.name}** has crossed **200** messages. the neon knows your footsteps by heart now.`
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[guestbook] error updating guest:', err);
+  }
 
   const gState = getGuildState(msg.guild.id);
   if (!gState.transcripts[msg.channel.id]) gState.transcripts[msg.channel.id] = [];
@@ -943,7 +969,7 @@ async function getWeatherSummary(locationRaw) {
       `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
       '&current_weather=true';
 
-    const res = await fetch(url);
+  const res = await fetch(url);
     if (!res.ok) throw new Error('Weather API error');
     const data = await res.json();
 
@@ -1230,13 +1256,13 @@ client.on(Events.MessageCreate, async (msg) => {
     }
 
     // ========= SPECIAL FAMILY LORE DETECTION =========
-const displayName = msg.member?.displayName?.toLowerCase?.() || '';
-const username = msg.author.username?.toLowerCase?.() || '';
+    const displayName = msg.member?.displayName?.toLowerCase?.() || '';
+    const username = msg.author.username?.toLowerCase?.() || '';
 
-const isMom =
-  username.includes('tepidtreachery') ||          // catches tepidtreachery, tepidtreachery., etc.
-  displayName.includes('tepidtreachery') ||       // if your nickname has it
-  displayName.includes("chad's mom");             // if you name yourself that in server
+    const isMom =
+      username.includes('tepidtreachery') ||          // catches tepidtreachery, tepidtreachery., etc.
+      displayName.includes('tepidtreachery') ||       // if your nickname has it
+      displayName.includes("chad's mom");             // if you name yourself that in server
 
 
     // GENERAL CHAD RESPONSE
@@ -1245,7 +1271,8 @@ const isMom =
 
     // In the Basement, prefer spicy flirt lines for the vibe if available
     const spicyPool = Array.isArray(brain.flirt_spicy) ? brain.flirt_spicy : [];
-    if (inBasement && spicyPool.length) {
+    const inBasementChannel = msg.channel?.parentId === BASEMENT_CATEGORY_ID;
+    if (inBasementChannel && spicyPool.length) {
       const spicy = spicyPool[Math.floor(Math.random() * spicyPool.length)];
       vibe = spicy || vibe;
     }
@@ -1253,7 +1280,7 @@ const isMom =
     // System prompts: SFW vs Basement NSFW
     let baseSystemContent;
 
-    if (inBasement) {
+    if (inBasementChannel) {
       baseSystemContent =
         "You are CHAD in The Basement — the NSFW wing of the Moonlit Motel. " +
         "You are still 6'4 of arrogant charm, chaotic flirt energy, and dark humor, " +
