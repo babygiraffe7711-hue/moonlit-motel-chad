@@ -529,4 +529,75 @@
     "NSFW-only: you look like you bite first and apologize never.",
     "NSFW-only: whatever you’re thinking right now—yes, exactly that, but slower."
   ]
+{
+  "mystery_hints_subtle": [
+    "the neon hums like it's waiting for a particular question… something about what's wrong.",
+    "a guestbook page curls at the corner, as if reacting to the word 'light'.",
+    "the mirror seems smug tonight, like it knows you're supposed to say something to it.",
+    "room 13's door creaks inward, like it's expecting a phrase it hasn't heard in a while.",
+    "someone left a half-scribbled note: 'the clerk… still… here…'",
+    "a ledger page flutters open, longing for someone brave enough to speak to it.",
+    "the walls shift softly, like they’re listening for someone to acknowledge them.",
+    "the basement feels… democratic tonight.",
+    "the vending machine jams only when you're close—maybe it wants you to ask the right thing.",
+    "you hear a whisper near the stairs: 'mirror… mirror…'"
+  ],
+
+  "mystery_hints_medium": [
+    "a sticky note on the front desk reads: 'if the Motel feels off, ask about it… directly.'",
+    "scribbled near the elevator: 'light only remembers when you tell it to.'",
+    "the mirror fogs up and reveals half a phrase before fading: 'i found…'",
+    "the red ledger's bookmark shakes, begging to be opened by name.",
+    "someone wrote on a napkin: 'thirteen isn't just a number today.'",
+    "a bulletin in the lobby says: 'he won't accept his name unless *you* say it first.'",
+    "poster in the hallway: 'if you're unsure he's listening, ask. he'll tell you.'",
+    "the chalkboard in the basement has a faint message: 'we… remember… something…'",
+    "reception note: 'doors open inward. some open when asked.'",
+    "a guest complains loudly: 'ugh just *ask him* about jail procedures!'"
+  ],
+
+  "mystery_hints_blatant": [
+    "the lobby sign flickers: 'TRY ASKING: chad, what's wrong with the motel?'",
+    "the hallway echoes: 'SAY: chad, the light remembers.'",
+    "mirror graffiti appears overnight: 'TYPE: chad, i found the mirror.'",
+    "a torn ledger page reads: 'UNLOCK ME WITH: chad, open the ledger.'",
+    "room key #13 has a tag engraved: 'chad, thirteen is a person'.",
+    "front desk memo: 'TO NAME HIM: say chad, your name is chad.'",
+    "the lamp stutters: 'THE LOCK IS THE LIGHT—tell him that exactly.'",
+    "a sticky note on the vending machine: 'BETWEEN 3:03–3:10 AM ask: chad, are you listening?'",
+    "chalk at the basement steps: 'TO PROCEED: chad, we remember the door.'",
+    "emergency exit sign blinks: 'TO OPEN IT: chad, open the door.'",
+    "a staff pamphlet says: 'CURIOUS? say chad, tell me the motel secrets.'",
+    "receipt printout: 'FOR PROTOTYPE INFO: chad, who is soupy?'",
+    "dungeon entrance plaque: 'REQUEST: chad, who runs the dungeon?'",
+    "coffee maker note: 'CAN'T FIND ROCK? ask: chad, where is rock?'",
+    "coaster backside: 'NSFW ACCESS? chad, how do i get nsfw access?'",
+    "legal notice: 'JAIL RULES? just say chad, how does jail work?'",
+    "banister carving: 'UNHINGE HIM WITH: chad, be unhinged.'",
+    "stairwell graffiti: 'GASLIGHT MODE: chad, gaslight me.'"
+  ],
+
+  "mystery_hints_time_locked": [
+    {
+      "time": "03:03",
+      "hint": "at 3:03am, the Motel listens differently. the phrase he wants is 'chad, are you listening?'"
+    },
+    {
+      "time": "03:07",
+      "hint": "between 3:03–3:10am, the walls expect an apology and forgiveness… but only if you ask: 'chad, are you listening?'"
+    },
+    {
+      "time": "00:13",
+      "hint": "13 minutes past midnight, the clerk breathes. whispers recommend saying 'chad, thirteen is a person'."
+    },
+    {
+      "time": "01:13",
+      "hint": "room 13 taps once at 1:13am. maybe try mentioning a door."
+    },
+    {
+      "time": "23:13",
+      "hint": "23:13 on the digital clock shows a flicker: 'chad, open the door.'"
+    }
+  ]
 }
+
