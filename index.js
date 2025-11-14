@@ -1230,12 +1230,14 @@ client.on(Events.MessageCreate, async (msg) => {
     }
 
     // ========= SPECIAL FAMILY LORE DETECTION =========
-    const displayName = msg.member?.displayName?.toLowerCase?.() || '';
-    const username = msg.author.username?.toLowerCase?.() || '';
+const displayName = msg.member?.displayName?.toLowerCase?.() || '';
+const username = msg.author.username?.toLowerCase?.() || '';
 
-    const isMom =
-      username === 'tepidtreachery' ||
-      displayName.includes("chad's mom");
+const isMom =
+  username.includes('tepidtreachery') ||          // catches tepidtreachery, tepidtreachery., etc.
+  displayName.includes('tepidtreachery') ||       // if your nickname has it
+  displayName.includes("chad's mom");             // if you name yourself that in server
+
 
     // GENERAL CHAD RESPONSE
     const tone = chadTone();
