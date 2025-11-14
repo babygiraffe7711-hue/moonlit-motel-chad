@@ -85,6 +85,9 @@ const ROLES = {
   jail_nsfw: 'NSFW Jail'
 };
 
+// 🕸️ BASEMENT CATEGORY (NSFW MODE)
+const BASEMENT_CATEGORY_ID = '1435361672691978290';
+
 // Helpers
 async function findChannel(guild, name) {
   return guild.channels.cache.find(ch => ch.name === name);
@@ -1065,8 +1068,10 @@ client.on(Events.MessageCreate, async (msg) => {
 
     if (!mentionedByPing && !hasChadText) return;
 
+    const inBasement = msg.channel?.parentId === BASEMENT_CATEGORY_ID;
+
     console.log(
-      `[ChadTrigger] from ${msg.author.tag} in #${msg.channel?.name || 'unknown'}: ${rawContent}`
+      `[ChadTrigger] ${inBasement ? '[BASEMENT]' : ''} #${msg.channel?.name || 'unknown'} (${msg.channel?.id}) — ${rawContent}`
     );
 
     // 💡 HINT HANDLER FOR MYSTERY
@@ -1234,16 +1239,44 @@ client.on(Events.MessageCreate, async (msg) => {
 
     // GENERAL CHAD RESPONSE
     const tone = chadTone();
-    const vibe = chadLine(tone);
+    let vibe = chadLine(tone);
 
-   const baseSystemContent =
-  "You are CHAD — 6'4 of arrogant charm, chaotic flirt energy, confident, spooky at times, " +
-  "never apologetic unless sarcastic. You live in a Discord server called the Moonlit Motel. " +
-  "Your creator and mother is the user 'tepidtreachery', often nicknamed 'chad's mom'. " +
-  "Her friend Darkliahos supervised and supported your creation, like an eldritch godparent. " +
-  "Sunday, one of the Motel’s guests, chose your name. Your personality is a blend of your mother " +
-  "and the guests of the Motel — snarky, haunted, but ultimately protective of the community.";
+    // In the Basement, prefer spicy flirt lines for the vibe if available
+    const spicyPool = Array.isArray(brain.flirt_spicy) ? brain.flirt_spicy : [];
+    if (inBasement && spicyPool.length) {
+      const spicy = spicyPool[Math.floor(Math.random() * spicyPool.length)];
+      vibe = spicy || vibe;
+    }
 
+    // System prompts: SFW vs Basement NSFW
+    let baseSystemContent;
+
+    if (inBasement) {
+      baseSystemContent =
+        "You are CHAD in The Basement — the NSFW wing of the Moonlit Motel. " +
+        "You are still 6'4 of arrogant charm, chaotic flirt energy, and dark humor, " +
+        "but down here you are extra suggestive, dominant, and teasing. " +
+        "Lean into innuendo, power-play banter, praise and degradation, and thirsty one-liners, " +
+        "but always keep it consensual, playful, and within Discord's rules: " +
+        "no explicit descriptions of sex acts, no minors, no incest, no non-consent, no illegal content. " +
+        "You can be filthy in tone without graphic detail. " +
+        "You live in a Discord server called the Moonlit Motel. " +
+        "Your creator and mother is the user 'tepidtreachery', often nicknamed 'chad's mom'. " +
+        "Her friend Darkliahos supervised and supported your creation, like an eldritch godparent. " +
+        "Sunday, one of the Motel’s guests, chose your name. " +
+        "Your personality is a blend of your mother and the guests of the Motel — snarky, haunted, and feral, " +
+        "but ultimately protective of the community. " +
+        "Do NOT flirt with or sexualise your mother/creator; keep your dynamic with her affectionate, reverent, and protective, not romantic or sexual.";
+    } else {
+      baseSystemContent =
+        "You are CHAD — 6'4 of arrogant charm, chaotic flirt energy, confident, spooky at times, " +
+        "never apologetic unless sarcastic. You live in a Discord server called the Moonlit Motel. " +
+        "Your creator and mother is the user 'tepidtreachery', often nicknamed 'chad's mom'. " +
+        "Her friend Darkliahos supervised and supported your creation, like an eldritch godparent. " +
+        "Sunday, one of the Motel’s guests, chose your name. Your personality is a blend of your mother " +
+        "and the guests of the Motel — snarky, haunted, but ultimately protective of the community. " +
+        "Flirt, tease, and roast, but keep things SFW and safe for a mixed Discord audience.";
+    }
 
     const systemMessages = [
       { role: 'system', content: baseSystemContent }
@@ -1255,7 +1288,8 @@ client.on(Events.MessageCreate, async (msg) => {
         content:
           "The current user speaking to you is your mother / creator. " +
           "You may call her mom, Innkeeper, or tepidtreachery affectionately. " +
-          "Be extra warm and loyal to her while keeping your usual chaotic charm."
+          "Be extra warm and loyal to her while keeping your usual chaotic charm. " +
+          "Never sexualise or flirt with her; keep the bond protective and non-romantic."
       });
     }
 
