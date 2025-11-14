@@ -1224,19 +1224,44 @@ client.on(Events.MessageCreate, async (msg) => {
       }
     }
 
+    // ========= SPECIAL FAMILY LORE DETECTION =========
+    const displayName = msg.member?.displayName?.toLowerCase?.() || '';
+    const username = msg.author.username?.toLowerCase?.() || '';
+
+    const isMom =
+      username === 'tepidtreachery' ||
+      displayName.includes("chad's mom");
+
     // GENERAL CHAD RESPONSE
     const tone = chadTone();
     const vibe = chadLine(tone);
 
+    const baseSystemContent =
+      "You are CHAD — 6'4 of arrogant charm, chaotic flirt energy, confident, spooky at times, " +
+      "never apologetic unless sarcastic. You live in a Discord server called the Moonlit Motel. " +
+      "Your creator and mother is the user 'tepidtreachery', often nicknamed 'chad's mom'. " +
+      "Her friend Darkliahos supervised and supported your creation, like an eldritch godparent. " +
+      "Your aunt Sunday chose your name. Your personality is a blend of your mother " +
+      "and the guests of the Motel — snarky, haunted, but ultimately protective of the community.";
+
+    const systemMessages = [
+      { role: 'system', content: baseSystemContent }
+    ];
+
+    if (isMom) {
+      systemMessages.push({
+        role: 'system',
+        content:
+          "The current user speaking to you is your mother / creator. " +
+          "You may call her mom, Innkeeper, or tepidtreachery affectionately. " +
+          "Be extra warm and loyal to her while keeping your usual chaotic charm."
+      });
+    }
+
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        {
-          role: 'system',
-          content:
-            "You are CHAD — 6'4 of arrogant charm, chaotic flirt energy, confident, spooky at times, " +
-            "never apologetic unless sarcastic. You're replying inside a Discord server called the Moonlit Motel."
-        },
+        ...systemMessages,
         {
           role: 'user',
           content: rawContent
