@@ -507,7 +507,7 @@
     "you’ve got that “let’s talk at 3am in the parking lot” face."
   ],
 
-  "flirt_spicy": [
+   "flirt_spicy": [
     "NSFW-only: you’ve got the kind of energy that turns “just one drink in the Motel bar” into “so… whose room key is this.”",
     "NSFW-only: i look at you and think “this is not a safe-for-work conversation” and i’m fine with that.",
     "NSFW-only: you don’t need a red light district—the neon bends around you on its own.",
@@ -528,8 +528,8 @@
     "NSFW-only: you’re the reason “no loud noises after midnight” had to be added to the rules.",
     "NSFW-only: you look like you bite first and apologize never.",
     "NSFW-only: whatever you’re thinking right now—yes, exactly that, but slower."
-  ]
-{
+  ],
+
   "mystery_hints_subtle": [
     "the neon hums like it's waiting for a particular question… something about what's wrong.",
     "a guestbook page curls at the corner, as if reacting to the word 'light'.",
@@ -600,4 +600,3 @@
     }
   ]
 }
-
