@@ -969,7 +969,7 @@ async function getWeatherSummary(locationRaw) {
       `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
       '&current_weather=true';
 
-  const res = await fetch(url);
+    const res = await fetch(url);
     if (!res.ok) throw new Error('Weather API error');
     const data = await res.json();
 
@@ -1075,24 +1075,38 @@ function handleStages(lower, msg, gState) {
   return false;
 }
 
-// MAIN CHAT HANDLER — global "Chad" / ping trigger + all extras
+// MAIN CHAT HANDLER — requires messages to start with "chad" or @Chad
 client.on(Events.MessageCreate, async (msg) => {
   if (!msg.guild || msg.author.bot) return;
 
   try {
     const rawContent = msg.content || '';
-    const lower = rawContent.toLowerCase().trim();
+
+    // Normalize leading @Chad mention to "chad"
+    const botId = client.user.id;
+    const mentionRegex = new RegExp(`^<@!?${botId}>`);
+    let normalized = rawContent;
+
+    if (mentionRegex.test(normalized)) {
+      normalized = normalized.replace(mentionRegex, 'chad').trimStart();
+    }
+
+    const lower = normalized.toLowerCase().trim();
 
     // Let the dedicated summarizer handler own this phrase
     if (lower.startsWith('chad, summarize')) return;
 
     const gState = getGuildState(msg.guild.id);
 
-    // If the message doesn't even contain "chad" anywhere and doesn't ping him, bail.
-    const mentionedByPing = msg.mentions.has(client.user);
-    const hasChadText = lower.includes('chad');
+    // NEW: only respond if message starts with "chad" or starts with @Chad
+    const startsWithChad =
+      lower.startsWith('chad,') ||
+      lower.startsWith('chad ') ||
+      lower === 'chad';
 
-    if (!mentionedByPing && !hasChadText) return;
+    const startsWithMention = mentionRegex.test(rawContent);
+
+    if (!startsWithChad && !startsWithMention) return;
 
     const inBasement = msg.channel?.parentId === BASEMENT_CATEGORY_ID;
 
@@ -1190,7 +1204,7 @@ client.on(Events.MessageCreate, async (msg) => {
 
     // 🏨 "ask the motel" — lore-flavoured answer
     if (lower.startsWith('chad, ask the motel')) {
-      const question = rawContent.split(/ask the motel/i)[1]?.trim() || 'What is this place?';
+      const question = normalized.split(/ask the motel/i)[1]?.trim() || 'What is this place?';
 
       const loreBits = [
         brain.lore?.title,
@@ -1264,15 +1278,13 @@ client.on(Events.MessageCreate, async (msg) => {
       displayName.includes('tepidtreachery') ||       // if your nickname has it
       displayName.includes("chad's mom");             // if you name yourself that in server
 
-
     // GENERAL CHAD RESPONSE
     const tone = chadTone();
     let vibe = chadLine(tone);
 
     // In the Basement, prefer spicy flirt lines for the vibe if available
     const spicyPool = Array.isArray(brain.flirt_spicy) ? brain.flirt_spicy : [];
-    const inBasementChannel = msg.channel?.parentId === BASEMENT_CATEGORY_ID;
-    if (inBasementChannel && spicyPool.length) {
+    if (inBasement && spicyPool.length) {
       const spicy = spicyPool[Math.floor(Math.random() * spicyPool.length)];
       vibe = spicy || vibe;
     }
@@ -1280,7 +1292,7 @@ client.on(Events.MessageCreate, async (msg) => {
     // System prompts: SFW vs Basement NSFW
     let baseSystemContent;
 
-    if (inBasementChannel) {
+    if (inBasement) {
       baseSystemContent =
         "You are CHAD in The Basement — the NSFW wing of the Moonlit Motel. " +
         "You are still 6'4 of arrogant charm, chaotic flirt energy, and dark humor, " +
